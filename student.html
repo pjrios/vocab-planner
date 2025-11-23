@@ -13,7 +13,7 @@
     <div class="app-container">
         <header class="app-header">
             <div class="header-left">
-                <a href="index.html" class="back-link">← Home</a>
+                <a href="index.html" class="back-link" style="display:none;">← Home</a>
                 <div style="display:flex; align-items:center; gap:0.5rem;">
                     <h1 id="welcome-header">Welcome!</h1>
                     <button id="edit-profile-btn" class="btn text-btn" title="Edit profile"
@@ -21,9 +21,9 @@
                 </div>
             </div>
             <div class="header-actions">
-                <div id="coin-balance" class="coin-badge" title="Your Coins">🪙 0</div>
                 <!-- Authenticated/User Status -->
                 <div id="google-user-info" style="display:none; align-items: center; gap: 1rem;">
+                    <div id="coin-balance" class="coin-badge" title="Your Coins" style="display:none;">🪙 0</div>
                     <div style="display: flex; align-items: center; gap: 0.5rem;">
                         <img id="google-user-avatar" src="" alt="Avatar"
                             style="width: 32px; height: 32px; border-radius: 50%;">

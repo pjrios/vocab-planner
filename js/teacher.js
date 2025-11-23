@@ -4,6 +4,8 @@ import {
     firebaseAuthService,
     doc,
     setDoc,
+    deleteDoc,
+    getDoc,
     getDocs,
     collection,
     serverTimestamp
@@ -29,6 +31,7 @@ class TeacherManager {
         this.VOCAB_COLLECTION = 'vocabularies';
         this.activeStudentId = null;
         this.currentQuiz = null;
+        this.currentRole = 'student';
 
         this.init();
     }
@@ -44,11 +47,7 @@ class TeacherManager {
             await firebaseAuthService.init();
             firebaseAuthService.onAuthStateChanged((user) => {
                 if (user) {
-                    this.isAuthenticated = true;
-                    this.currentUser = user;
-                    this.updateAuthUI(user);
-                    this.showDashboard();
-                    this.loadLibrary();
+                    this.handleAuthWithRole(user);
                 } else {
                     this.isAuthenticated = false;
                     this.currentUser = null;
@@ -61,6 +60,61 @@ class TeacherManager {
             this.showAuthError('Authentication unavailable. Please refresh to try again.');
             this.showLoginView();
         }
+    }
+
+    async handleAuthWithRole(user) {
+        try {
+            const role = await this.fetchUserRole(user);
+            this.currentRole = role;
+            if (role !== 'teacher') {
+                alert('Access restricted to teachers.');
+                await firebaseAuthService.signOut();
+                return;
+            }
+            this.isAuthenticated = true;
+            this.currentUser = user;
+            this.updateAuthUI(user);
+            this.showDashboard();
+            this.loadLibrary();
+        } catch (err) {
+            console.error('Role check failed:', err);
+            this.showAuthError('Could not verify teacher role.');
+            this.showLoginView();
+        }
+    }
+
+    async fetchUserRole(user) {
+        let role = 'student';
+        try {
+            const db = firebaseAuthService.getFirestore();
+            const roleRef = doc(db, 'userRoles', user.uid);
+            const snap = await getDoc(roleRef);
+            if (snap.exists()) {
+                role = snap.data().role || 'student';
+            } else {
+                // Try to create as teacher (if allowlisted), otherwise fallback to student
+                let created = false;
+                try {
+                    await setDoc(roleRef, { role: 'teacher', email: user.email || '' }, { merge: true });
+                    role = 'teacher';
+                    created = true;
+                } catch (err) {
+                    // ignore
+                }
+                if (!created) {
+                    try {
+                        await setDoc(roleRef, { role: 'student', email: user.email || '' }, { merge: true });
+                        role = 'student';
+                    } catch (err) {
+                        console.error('Failed to create role doc', err);
+                    }
+                }
+            }
+        } catch (err) {
+            console.error('Failed to fetch role', err);
+            role = 'student';
+        }
+        return role;
     }
 
     switchView(viewId) {
@@ -270,8 +324,9 @@ class TeacherManager {
         const badge = badgeStyles[type] || badgeStyles.remote;
 
         let deleteBtnHtml = '';
-        if (type === 'local') {
-            deleteBtnHtml = `<button class="delete-vocab-btn" style="position:absolute; bottom:10px; right:10px; background:transparent; border:none; color:red; cursor:pointer; font-size:1.2rem;" title="Delete Local">🗑️</button>`;
+        if (type === 'local' || type === 'cloud') {
+            const label = type === 'cloud' ? 'Delete Cloud' : 'Delete Local';
+            deleteBtnHtml = `<button class="delete-vocab-btn" style="position:absolute; bottom:10px; right:10px; background:transparent; border:none; color:red; cursor:pointer; font-size:1.2rem;" title="${label}">🗑️</button>`;
         }
 
         card.innerHTML = `
@@ -296,13 +351,18 @@ class TeacherManager {
             }
         });
 
-        if (type === 'local') {
+        if (type === 'local' || type === 'cloud') {
             const deleteBtn = card.querySelector('.delete-vocab-btn');
             if (deleteBtn) {
-                deleteBtn.addEventListener('click', (e) => {
+                deleteBtn.addEventListener('click', async (e) => {
                     e.stopPropagation();
-                    if (confirm(`Delete local vocabulary "${vocab.name}"? This cannot be undone.`)) {
-                        this.deleteLocalVocab(vocab.id);
+                    const label = type === 'cloud' ? 'cloud' : 'local';
+                    if (confirm(`Delete ${label} vocabulary "${vocab.name}"? This cannot be undone.`)) {
+                        if (type === 'local') {
+                            this.deleteLocalVocab(vocab.id);
+                        } else {
+                            await this.deleteCloudVocab(vocab.id);
+                        }
                         this.loadLibrary(); // Refresh
                     }
                 });
@@ -315,6 +375,18 @@ class TeacherManager {
         let vocabs = this.getLocalVocabs();
         vocabs = vocabs.filter(v => v.id !== id);
         localStorage.setItem('teacher_vocab_library', JSON.stringify(vocabs));
+    }
+
+    async deleteCloudVocab(id) {
+        if (!this.ensureAuthenticated()) return;
+        try {
+            const db = firebaseAuthService.getFirestore();
+            const ref = doc(db, this.VOCAB_COLLECTION, id);
+            await deleteDoc(ref);
+        } catch (err) {
+            console.error('Failed to delete cloud vocab', err);
+            alert('Could not delete cloud vocabulary.');
+        }
     }
 
     loadLocalVocabulary(vocab) {
@@ -1194,6 +1266,7 @@ class TeacherManager {
 
             tr.innerHTML = `
                 <td style="padding: 1rem;">${name}</td>
+                <td style="padding: 1rem; color: var(--text-muted);">${student.email || profile.email || '-'}</td>
                 <td style="padding: 1rem;">${profile.grade || '-'}</td>
                 <td style="padding: 1rem;">${profile.group || '-'}</td>
                 <td style="padding: 1rem;">🪙 ${student.coins || 0}</td>

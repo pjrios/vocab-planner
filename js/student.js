@@ -36,12 +36,14 @@ class StudentManager {
             lastName: '',
             name: '',
             grade: '',
-            studentId: ''
+            studentId: '',
+            email: ''
         };
         this.progressData = {};
         this.activityInstance = null;
         this.currentUser = null;
         this.coins = 0;
+        this.currentRole = 'student';
 
         // Game variables
         this.currentGame = null;
@@ -411,6 +413,8 @@ class StudentManager {
                 studentProfile: this.studentProfile,
                 units: this.progressData.units || {},
                 coins: this.coins,
+                email: this.currentUser?.email || this.studentProfile.email || '',
+                role: this.currentRole || 'student',
                 updatedAt: serverTimestamp()
             };
             await setDoc(docRef, payload, { merge: true });
@@ -440,8 +444,45 @@ class StudentManager {
         return fetch(dataUrl).then(res => res.blob());
     }
 
+    async fetchAndSetRole(user) {
+        this.currentRole = 'student';
+        if (!user) return this.currentRole;
+        try {
+            const db = firebaseAuthService.getFirestore();
+            const roleRef = doc(db, 'userRoles', user.uid);
+            const snap = await getDoc(roleRef);
+            if (snap.exists()) {
+                const data = snap.data();
+                this.currentRole = data.role || 'student';
+            } else {
+                // Try to create as teacher (rules allow only allowlisted), fallback to student
+                let created = false;
+                try {
+                    await setDoc(roleRef, { role: 'teacher', email: user.email || '' }, { merge: true });
+                    this.currentRole = 'teacher';
+                    created = true;
+                } catch (err) {
+                    // ignore
+                }
+                if (!created) {
+                    try {
+                        await setDoc(roleRef, { role: 'student', email: user.email || '' }, { merge: true });
+                        this.currentRole = 'student';
+                    } catch (err) {
+                        console.error('Failed to create role doc', err);
+                    }
+                }
+            }
+        } catch (err) {
+            console.error('Failed to load role', err);
+            this.currentRole = 'student';
+        }
+        return this.currentRole;
+    }
+
     async handleFirebaseSignIn(user) {
         this.currentUser = user;
+        await this.fetchAndSetRole(user);
         this.setAuthStatus('🔐 Signed in');
         this.updateGuestStatus(false);
 
@@ -891,6 +932,7 @@ class StudentManager {
         const coinEl = $('#coin-balance');
         if (coinEl) {
             coinEl.textContent = `🪙 ${this.coins} `;
+            coinEl.style.display = this.currentUser ? 'flex' : 'none';
         }
     }
 
