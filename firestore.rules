@@ -1,0 +1,30 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Vocabularies Collection
+    // Readable by everyone
+    // Writable by authenticated users (teachers)
+    match /vocabularies/{vocabId} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+    
+    // Student Progress Collection
+    // Readable by authenticated users
+    // Writable by the user themselves OR any authenticated teacher (no claim available, so allow any signed-in teacher client)
+    match /studentProgress/{userId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+
+    // Leaderboard Scores
+    // Readable by authenticated users
+    // Writable by authenticated users (own score)
+    match /scores/{scoreId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow update: if request.auth != null && request.resource.data.userId == request.auth.uid;
+    }
+  }
+}

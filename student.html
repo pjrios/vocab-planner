@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Student Dashboard - Vocabulary App</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div class="app-container">
+        <header class="app-header">
+            <div class="header-left">
+                <a href="index.html" class="back-link">← Home</a>
+                <div style="display:flex; align-items:center; gap:0.5rem;">
+                    <h1 id="welcome-header">Welcome!</h1>
+                    <button id="edit-profile-btn" class="btn text-btn" title="Edit profile"
+                        style="font-size:0.9rem;">✏️</button>
+                </div>
+            </div>
+            <div class="header-actions">
+                <div id="coin-balance" class="coin-badge" title="Your Coins">🪙 0</div>
+                <!-- Authenticated/User Status -->
+                <div id="google-user-info" style="display:none; align-items: center; gap: 1rem;">
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                        <img id="google-user-avatar" src="" alt="Avatar"
+                            style="width: 32px; height: 32px; border-radius: 50%;">
+                        <span id="google-user-name" style="font-size: 0.875rem; color: var(--text-muted);"></span>
+                    </div>
+                    <span id="auth-status" style="font-size: 0.75rem; color: var(--success-color);"
+                        title="Progress sync status">☁️ Syncing...</span>
+                    <button id="google-sign-out-btn" class="btn text-btn" style="font-size: 0.875rem;">Sign
+                        Out</button>
+                </div>
+                <div id="guest-status" style="font-size:0.85rem; color:var(--text-muted);">
+                    🔒 Guest mode – progress stored on this device
+                </div>
+            </div>
+        </header>
+
+        <main>
+            <!-- Loading View -->
+            <section id="loading-view" class="view active">
+                <div
+                    style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 60vh;">
+                    <div class="loading-spinner" style="width: 50px; height: 50px; border-width: 4px;"></div>
+                    <p style="margin-top: 1rem; color: var(--text-muted);">Checking authentication...</p>
+                </div>
+            </section>
+
+            <!-- Login View -->
+            <section id="login-view" class="view hidden">
+                <div class="login-container"
+                    style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 60vh; text-align: center;">
+                    <div class="icon" style="font-size: 4rem; margin-bottom: 1rem;">🎓</div>
+                    <h2 style="font-size: 2rem; margin-bottom: 0.5rem;">Student Login</h2>
+                    <p style="color: var(--text-muted); margin-bottom: 2rem;">Sign in with your school Google
+                        account or continue as a guest.</p>
+
+                    <button id="google-login-btn" class="btn primary-btn"
+                        style="font-size: 1.2rem; padding: 1rem 2rem; display: flex; align-items: center; gap: 1rem;">
+                        <span style="font-size: 1.5rem;">🔐</span> Sign in with Google
+                    </button>
+
+                    <div id="login-error" style="color: var(--danger-color); margin-top: 1rem; display: none;">
+                    </div>
+
+                    <p style="margin-top: 2rem; font-size: 0.875rem; color: var(--text-muted);">
+                        Don't have a Google account?
+                        <a href="#" id="skip-login-link" style="color: var(--primary-color);">Continue as Guest</a>
+                    </p>
+                </div>
+            </section>
+
+            <!-- View: Main Menu -->
+            <section id="main-menu-view" class="view hidden">
+                <h2 style="text-align: center; margin-bottom: 2rem; font-size: 2rem; color: var(--primary-color);">What
+                    would you like to do?</h2>
+                <div class="menu-grid"
+                    style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 2rem; max-width: 800px; margin: 0 auto;">
+                    <div class="card menu-card" id="menu-vocab-btn"
+                        style="cursor: pointer; text-align: center; padding: 3rem 2rem; transition: transform 0.2s, box-shadow 0.2s;">
+                        <div style="font-size: 4rem; margin-bottom: 1rem;">📚</div>
+                        <h3 style="font-size: 1.5rem; margin-bottom: 0.5rem;">Vocabulary Units</h3>
+                        <p style="color: var(--text-muted);">Practice your words and earn coins!</p>
+                    </div>
+                    <div class="card menu-card" id="menu-arcade-btn"
+                        style="cursor: pointer; text-align: center; padding: 3rem 2rem; transition: transform 0.2s, box-shadow 0.2s;">
+                        <div style="font-size: 4rem; margin-bottom: 1rem;">🕹️</div>
+                        <h3 style="font-size: 1.5rem; margin-bottom: 0.5rem;">The Arcade</h3>
+                        <p style="color: var(--text-muted);">Spend your coins on fun games!</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Vocabulary Selection View -->
+            <section id="vocab-selection-view" class="view hidden">
+                <div class="section-header">
+                    <button id="back-to-main-menu-btn" class="btn text-btn">← Main Menu</button>
+                    <h2>Choose a Unit</h2>
+                </div>
+                <div id="vocab-list" class="vocab-grid">
+                    <!-- Vocabulary sets will be listed here -->
+                    <div class="loading-spinner">Loading vocabularies...</div>
+                </div>
+            </section>
+
+            <!-- View: Activity Menu -->
+            <section id="activity-menu-view" class="view hidden">
+                <div class="section-header">
+                    <button id="back-to-vocab" class="btn text-btn">← Back to Units</button>
+                    <h2 id="current-unit-title">Unit Title</h2>
+                    <button id="generate-final-report-btn" class="btn accent-btn">📜 Final Report</button>
+                </div>
+                <div class="activities-grid">
+                    <!-- Activity cards -->
+                    <div class="card activity-card" data-activity="matching">
+                        <div class="icon">🧩</div>
+                        <h3>Matching</h3>
+                        <p>Match words to definitions.</p>
+                    </div>
+                    <div class="card activity-card" data-activity="flashcards">
+                        <div class="icon">📇</div>
+                        <h3>Flashcards</h3>
+                        <p>Study words and images.</p>
+                    </div>
+                    <div class="card activity-card" data-activity="quiz">
+                        <div class="icon">❓</div>
+                        <h3>Quiz</h3>
+                        <p>Test your knowledge.</p>
+                    </div>
+                    <div class="card activity-card" data-activity="synonym-antonym">
+                        <div class="icon">🔄</div>
+                        <h3>Synonym & Antonym</h3>
+                        <p>Challenge your word knowledge.</p>
+                    </div>
+                    <div class="card activity-card" data-activity="illustration">
+                        <div class="icon">🖼️</div>
+                        <h3>Image Hunt</h3>
+                        <p>Find and upload images.</p>
+                    </div>
+                    <div class="card activity-card" data-activity="word-search">
+                        <div class="icon">🔍</div>
+                        <h3>Word Search</h3>
+                        <p>Find hidden vocabulary words.</p>
+                    </div>
+                    <div class="card activity-card" data-activity="crossword">
+                        <div class="icon">📝</div>
+                        <h3>Crossword</h3>
+                        <p>Solve definitions.</p>
+                    </div>
+                    <div class="card activity-card" data-activity="hangman">
+                        <div class="icon">🕵️‍♀️</div>
+                        <h3>Hangman</h3>
+                        <p>Guess the word.</p>
+                    </div>
+                    <div class="card activity-card" data-activity="scramble">
+                        <div class="icon">🌪️</div>
+                        <h3>Word Scramble</h3>
+                        <p>Unscramble the letters.</p>
+                    </div>
+                    <div class="card activity-card" data-activity="speed-match">
+                        <div class="icon">⏱️</div>
+                        <h3>Speed Match</h3>
+                        <p>Race against time.</p>
+                    </div>
+                    <div class="card activity-card" data-activity="fill-in-blank">
+                        <div class="icon">✍️</div>
+                        <h3>Fill in Blank</h3>
+                        <p>Complete the sentence.</p>
+                    </div>
+                    <!-- Add more activities here -->
+                </div>
+            </section>
+
+            <!-- View: Activity Container -->
+            <section id="activity-view" class="view hidden">
+                <div class="activity-header">
+                    <button id="back-to-menu-btn" class="btn text-btn">← Back</button>
+                    <div id="activity-progress-indicator" class="hidden">Progress: 0%</div>
+                </div>
+                <div id="activity-container"></div>
+            </section>
+
+            <!-- View: Arcade -->
+            <section id="arcade-view" class="view hidden">
+                <div class="section-header">
+                    <button id="back-from-arcade-btn" class="btn text-btn">← Back to Menu</button>
+                    <h2>🕹️ The Arcade</h2>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 2rem; align-items: start;">
+                    <!-- Game Area -->
+                    <div class="arcade-container">
+                        <div id="game-selection">
+                            <div
+                                style="display: flex; align-items: center; justify-content: center; gap: 2rem; margin-bottom: 2rem;">
+                                <button id="prev-game-select-btn" class="btn secondary-btn"
+                                    style="padding: 1rem 1.5rem; font-size: 1.5rem;">◀</button>
+                                <div id="current-game-card" class="card game-card" style="max-width: 400px; flex: 1;">
+                                    <!-- Game card will be dynamically inserted here -->
+                                </div>
+                                <button id="next-game-select-btn" class="btn secondary-btn"
+                                    style="padding: 1rem 1.5rem; font-size: 1.5rem;">▶</button>
+                            </div>
+                        </div>
+                        <div id="game-stage" class="hidden">
+                            <div class="game-header">
+                                <div id="game-timer">Time: 0:00</div>
+                                <button id="add-time-btn" class="btn accent-btn">+1 Min (10 Coins)</button>
+                                <button id="exit-game-btn" class="btn secondary-btn">Exit</button>
+                            </div>
+                            <canvas id="game-canvas" width="800" height="600"
+                                style="max-width: 100%; height: auto; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Leaderboard Section -->
+                    <div id="leaderboard-container" class="card" style="position: sticky; top: 2rem;">
+                        <h3 style="text-align: center; margin-bottom: 0.5rem; color: var(--primary-color);">🏆
+                            Leaderboard</h3>
+                        <h4 id="current-game-name"
+                            style="margin: 0 0 1rem 0; text-align: center; color: var(--text-muted);">Galactic Breaker
+                        </h4>
+                        <div id="leaderboard-list" style="display: flex; flex-direction: column; gap: 0.5rem;">
+                            <!-- Scores will be injected here -->
+                            <div class="loading-spinner">Loading scores...</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Student Profile Modal -->
+    <div id="profile-modal" class="modal hidden">
+        <div class="modal-content card">
+            <div class="modal-header">
+                <h3>Student Profile</h3>
+            </div>
+            <div class="modal-body">
+                <p style="margin-bottom: 1rem; color: var(--text-muted);">Please enter your details to start.</p>
+                <div class="form-group">
+                    <label for="student-firstname">First Name</label>
+                    <input type="text" id="student-firstname" placeholder="First Name">
+                </div>
+                <div class="form-group">
+                    <label for="student-lastname">Last Name</label>
+                    <input type="text" id="student-lastname" placeholder="Last Name">
+                </div>
+                <div class="form-group">
+                    <label for="student-grade">Grade</label>
+                    <input type="text" id="student-grade" placeholder="e.g., 6th Grade">
+                </div>
+                <div class="form-group">
+                    <label for="student-group">Group/Class</label>
+                    <input type="text" id="student-group" placeholder="e.g., Class A">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="save-profile-btn" class="btn primary-btn">Start Learning</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="js/libs/html2canvas.min.js"></script>
+    <script src="js/main.js" type="module"></script>
+    <script src="js/student.js" type="module"></script>
+</body>
+
+</html>
