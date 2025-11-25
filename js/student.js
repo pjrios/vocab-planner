@@ -1204,22 +1204,12 @@ class StudentManager {
     pauseGame() {
         if (!this.currentGame) return;
 
-        this.currentGame.pause();
-        this.isGamePaused = true;
-
-        // Stop the timer
-        if (this.gameTimerInterval) { // Changed from gameTimer to gameTimerInterval to match existing property
-            clearInterval(this.gameTimerInterval);
-            this.gameTimerInterval = null;
-        }
-
-        // Check if we can auto-extend
-        // Use default settings if no vocab selected (arcade mode)
+        // Check if we can auto-extend BEFORE pausing
         const settings = (this.currentVocab && this.currentVocab.activitySettings) ? this.currentVocab.activitySettings : {};
         const exchangeRate = settings.exchangeRate !== undefined ? settings.exchangeRate : 10;
 
         if (this.coins >= exchangeRate) {
-            // Auto-deduct and add time without pausing
+            // Auto-deduct and add time - NO PAUSE, game continues seamlessly
             this.deductCoins(exchangeRate);
             this.addGameTime(60);
 
@@ -1233,13 +1223,20 @@ class StudentManager {
                 this.updateGameTimer();
             }, 1500);
 
-            return; // Continue game without interruption
+            return; // Continue game without any interruption
         }
 
-        // If not enough coins, pause and notify
-        if (this.currentGame) this.currentGame.pause();
-        clearInterval(this.gameTimerInterval);
+        // Only pause if not enough coins
+        this.currentGame.pause();
+        this.isGamePaused = true;
 
+        // Stop the timer
+        if (this.gameTimerInterval) {
+            clearInterval(this.gameTimerInterval);
+            this.gameTimerInterval = null;
+        }
+
+        // Not enough coins - end game
         alert('Time up! Not enough coins to continue.');
         this.stopCurrentGame();
         $('#game-stage').classList.add('hidden');
