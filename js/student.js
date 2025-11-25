@@ -683,13 +683,28 @@ class StudentManager {
         this.addListener('#save-profile-btn', 'click', () => {
             const firstName = $('#student-firstname').value.trim();
             const lastName = $('#student-lastname').value.trim();
-            const grade = $('#student-grade').value.trim();
-            const group = $('#student-group').value.trim();
+            let grade = $('#student-grade').value.trim();
+            let group = $('#student-group').value.trim();
             const isLoginViewVisible = $('#login-view') && !$('#login-view').classList.contains('hidden');
 
             if (!firstName) {
                 alert('Please enter your first name.');
                 return;
+            }
+
+            // Validate grade: only numbers
+            if (grade && !/^\d+$/.test(grade)) {
+                alert('Grade must contain only numbers (e.g., 6, 7, 8).');
+                return;
+            }
+
+            // Validate and normalize group: single letter, convert to uppercase
+            if (group) {
+                if (!/^[a-zA-Z]$/.test(group)) {
+                    alert('Group must be a single letter (e.g., A, B, C).');
+                    return;
+                }
+                group = group.toUpperCase();
             }
 
             this.studentProfile = {
@@ -1204,11 +1219,11 @@ class StudentManager {
         const exchangeRate = settings.exchangeRate !== undefined ? settings.exchangeRate : 10;
 
         if (this.coins >= exchangeRate) {
-            // Auto-deduct
+            // Auto-deduct and add time without pausing
             this.deductCoins(exchangeRate);
             this.addGameTime(60);
 
-            // Optional: Visual feedback for extension
+            // Visual feedback for extension (non-blocking)
             const timerEl = $('#game-timer');
             const originalColor = timerEl.style.color;
             timerEl.style.color = '#4ade80'; // Green
@@ -1216,26 +1231,12 @@ class StudentManager {
             setTimeout(() => {
                 timerEl.style.color = originalColor;
                 this.updateGameTimer();
-                // Resume the game after showing notification
-                if (this.currentGame && this.isGamePaused) {
-                    this.currentGame.resume();
-                    this.isGamePaused = false;
-                    // Restart timer
-                    this.gameTimerInterval = setInterval(() => {
-                        if (this.gameTimeRemaining > 0) {
-                            this.gameTimeRemaining--;
-                            this.updateGameTimer();
-                        } else {
-                            this.pauseGame();
-                        }
-                    }, 1000);
-                }
             }, 1500);
 
-            return; // Continue game without staying paused
+            return; // Continue game without interruption
         }
 
-        // If not enough coins, then pause and ask (or just stop)
+        // If not enough coins, pause and notify
         if (this.currentGame) this.currentGame.pause();
         clearInterval(this.gameTimerInterval);
 

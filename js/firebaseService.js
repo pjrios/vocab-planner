@@ -20,7 +20,8 @@ import {
     where,
     orderBy,
     limit,
-    serverTimestamp
+    serverTimestamp,
+    writeBatch
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 
 class FirebaseAuthService {
@@ -106,5 +107,6 @@ export {
     where,
     orderBy,
     limit,
-    serverTimestamp
+    serverTimestamp,
+    writeBatch
 };

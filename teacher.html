@@ -124,6 +124,9 @@
                         <table style="width: 100%; border-collapse: collapse; text-align: left;">
                             <thead>
                                 <tr style="border-bottom: 2px solid var(--border-color);">
+                                    <th style="padding: 1rem; width: 50px;">
+                                        <input type="checkbox" id="select-all-students" title="Select All">
+                                    </th>
                                     <th style="padding: 1rem;">Name</th>
                                     <th style="padding: 1rem;">Email</th>
                                     <th style="padding: 1rem;">Grade</th>
@@ -139,6 +142,19 @@
                         </table>
                     </div>
                     <div id="progress-loading" class="loading-spinner hidden">Loading data...</div>
+                </div>
+
+                <!-- Bulk Action Toolbar -->
+                <div id="bulk-action-toolbar" class="bulk-action-toolbar hidden">
+                    <div class="bulk-toolbar-content">
+                        <span id="bulk-selected-count" class="bulk-count">0 students selected</span>
+                        <div class="bulk-actions">
+                            <input type="number" id="bulk-coin-input" value="10" min="1" placeholder="Coins"
+                                style="width: 90px; padding: 0.5rem;">
+                            <button id="bulk-add-coins-btn" class="btn primary-btn">Add Coins to Selected</button>
+                            <button id="bulk-clear-selection-btn" class="btn text-btn">Clear Selection</button>
+                        </div>
+                    </div>
                 </div>
             </section>
 
@@ -331,7 +347,8 @@
                             <h4 style="font-size: 0.9rem; color: var(--text-muted); margin-bottom: 0.5rem;">Add
                                 Questions</h4>
                             <div style="display:flex; flex-direction:column; gap:0.5rem;">
-                                <div style="font-size:0.75rem; color:var(--text-muted); display:flex; align-items:center; gap:0.5rem;">
+                                <div
+                                    style="font-size:0.75rem; color:var(--text-muted); display:flex; align-items:center; gap:0.5rem;">
                                     <span style="flex:1;">Type</span>
                                     <span style="width:70px; text-align:center;">Pts/Q</span>
                                     <span style="width:70px; text-align:center;">Count</span>
@@ -342,72 +359,100 @@
                                     <div class="quiz-row" data-type="mc"
                                         style="position:relative; display:grid; grid-template-columns: 1fr 70px 70px; gap:0.4rem; align-items:center; padding:0.75rem 0.55rem 0.55rem 0.55rem; border:1px solid var(--border-color); border-radius:10px; background: rgba(255,255,255,0.05);">
                                         <div style="position:absolute; top:6px; right:6px; display:flex; gap:0.25rem;">
-                                            <button type="button" class="btn text-btn order-up" data-type="mc" title="Move up">↑</button>
-                                            <button type="button" class="btn text-btn order-down" data-type="mc" title="Move down">↓</button>
+                                            <button type="button" class="btn text-btn order-up" data-type="mc"
+                                                title="Move up">↑</button>
+                                            <button type="button" class="btn text-btn order-down" data-type="mc"
+                                                title="Move down">↓</button>
                                         </div>
                                         <label style="font-size: 0.8rem; font-weight:600;">Multiple Choice</label>
-                                        <input type="number" id="mc-points" min="0" value="1" style="padding:0.3rem; text-align:center;">
-                                        <input type="number" id="mc-count" min="0" value="5" style="padding:0.3rem; text-align:center;">
+                                        <input type="number" id="mc-points" min="0" value="1"
+                                            style="padding:0.3rem; text-align:center;">
+                                        <input type="number" id="mc-count" min="0" value="5"
+                                            style="padding:0.3rem; text-align:center;">
                                     </div>
                                     <div class="quiz-row" data-type="tf"
                                         style="position:relative; display:grid; grid-template-columns: 1fr 70px 70px; gap:0.4rem; align-items:center; padding:0.75rem 0.55rem 0.55rem 0.55rem; border:1px solid var(--border-color); border-radius:10px; background: rgba(255,255,255,0.05);">
                                         <div style="position:absolute; top:6px; right:6px; display:flex; gap:0.25rem;">
-                                            <button type="button" class="btn text-btn order-up" data-type="tf" title="Move up">↑</button>
-                                            <button type="button" class="btn text-btn order-down" data-type="tf" title="Move down">↓</button>
+                                            <button type="button" class="btn text-btn order-up" data-type="tf"
+                                                title="Move up">↑</button>
+                                            <button type="button" class="btn text-btn order-down" data-type="tf"
+                                                title="Move down">↓</button>
                                         </div>
                                         <label style="font-size: 0.8rem; font-weight:600;">True / False</label>
-                                        <input type="number" id="tf-points" min="0" value="1" style="padding:0.3rem; text-align:center;">
-                                        <input type="number" id="tf-count" min="0" value="5" style="padding:0.3rem; text-align:center;">
+                                        <input type="number" id="tf-points" min="0" value="1"
+                                            style="padding:0.3rem; text-align:center;">
+                                        <input type="number" id="tf-count" min="0" value="5"
+                                            style="padding:0.3rem; text-align:center;">
                                     </div>
                                     <div class="quiz-row" data-type="matching"
                                         style="position:relative; display:grid; grid-template-columns: 1fr 70px 70px; gap:0.4rem; align-items:center; padding:0.75rem 0.55rem 0.55rem 0.55rem; border:1px solid var(--border-color); border-radius:10px; background: rgba(255,255,255,0.05);">
                                         <div style="position:absolute; top:6px; right:6px; display:flex; gap:0.25rem;">
-                                            <button type="button" class="btn text-btn order-up" data-type="matching" title="Move up">↑</button>
-                                            <button type="button" class="btn text-btn order-down" data-type="matching" title="Move down">↓</button>
+                                            <button type="button" class="btn text-btn order-up" data-type="matching"
+                                                title="Move up">↑</button>
+                                            <button type="button" class="btn text-btn order-down" data-type="matching"
+                                                title="Move down">↓</button>
                                         </div>
                                         <label style="font-size: 0.8rem; font-weight:600;">Matching</label>
-                                        <input type="number" id="match-points" min="0" value="1" style="padding:0.3rem; text-align:center;">
-                                        <input type="number" id="match-count" min="0" value="5" style="padding:0.3rem; text-align:center;">
+                                        <input type="number" id="match-points" min="0" value="1"
+                                            style="padding:0.3rem; text-align:center;">
+                                        <input type="number" id="match-count" min="0" value="5"
+                                            style="padding:0.3rem; text-align:center;">
                                     </div>
                                     <div class="quiz-row" data-type="short"
                                         style="position:relative; display:grid; grid-template-columns: 1fr 70px 70px; gap:0.4rem; align-items:center; padding:0.75rem 0.55rem 0.55rem 0.55rem; border:1px solid var(--border-color); border-radius:10px; background: rgba(255,255,255,0.05);">
                                         <div style="position:absolute; top:6px; right:6px; display:flex; gap:0.25rem;">
-                                            <button type="button" class="btn text-btn order-up" data-type="short" title="Move up">↑</button>
-                                            <button type="button" class="btn text-btn order-down" data-type="short" title="Move down">↓</button>
+                                            <button type="button" class="btn text-btn order-up" data-type="short"
+                                                title="Move up">↑</button>
+                                            <button type="button" class="btn text-btn order-down" data-type="short"
+                                                title="Move down">↓</button>
                                         </div>
                                         <label style="font-size: 0.8rem; font-weight:600;">Short Answer</label>
-                                        <input type="number" id="short-points" min="0" value="1" style="padding:0.3rem; text-align:center;">
-                                        <input type="number" id="short-count" min="0" value="1" style="padding:0.3rem; text-align:center;">
+                                        <input type="number" id="short-points" min="0" value="1"
+                                            style="padding:0.3rem; text-align:center;">
+                                        <input type="number" id="short-count" min="0" value="1"
+                                            style="padding:0.3rem; text-align:center;">
                                     </div>
                                     <div class="quiz-row" data-type="synonym"
                                         style="position:relative; display:grid; grid-template-columns: 1fr 70px 70px; gap:0.4rem; align-items:center; padding:0.75rem 0.55rem 0.55rem 0.55rem; border:1px solid var(--border-color); border-radius:10px; background: rgba(255,255,255,0.05);">
                                         <div style="position:absolute; top:6px; right:6px; display:flex; gap:0.25rem;">
-                                            <button type="button" class="btn text-btn order-up" data-type="synonym" title="Move up">↑</button>
-                                            <button type="button" class="btn text-btn order-down" data-type="synonym" title="Move down">↓</button>
+                                            <button type="button" class="btn text-btn order-up" data-type="synonym"
+                                                title="Move up">↑</button>
+                                            <button type="button" class="btn text-btn order-down" data-type="synonym"
+                                                title="Move down">↓</button>
                                         </div>
                                         <label style="font-size: 0.8rem; font-weight:600;">Synonym / Antonym</label>
-                                        <input type="number" id="synonym-points" min="0" value="1" style="padding:0.3rem; text-align:center;">
-                                        <input type="number" id="synonym-count" min="0" value="5" style="padding:0.3rem; text-align:center;">
+                                        <input type="number" id="synonym-points" min="0" value="1"
+                                            style="padding:0.3rem; text-align:center;">
+                                        <input type="number" id="synonym-count" min="0" value="5"
+                                            style="padding:0.3rem; text-align:center;">
                                     </div>
                                     <div class="quiz-row" data-type="wordsearch"
                                         style="position:relative; display:grid; grid-template-columns: 1fr 70px 70px; gap:0.4rem; align-items:center; padding:0.75rem 0.55rem 0.55rem 0.55rem; border:1px solid var(--border-color); border-radius:10px; background: rgba(255,255,255,0.05);">
                                         <div style="position:absolute; top:6px; right:6px; display:flex; gap:0.25rem;">
-                                            <button type="button" class="btn text-btn order-up" data-type="wordsearch" title="Move up">↑</button>
-                                            <button type="button" class="btn text-btn order-down" data-type="wordsearch" title="Move down">↓</button>
+                                            <button type="button" class="btn text-btn order-up" data-type="wordsearch"
+                                                title="Move up">↑</button>
+                                            <button type="button" class="btn text-btn order-down" data-type="wordsearch"
+                                                title="Move down">↓</button>
                                         </div>
                                         <label style="font-size: 0.8rem; font-weight:600;">Word Search</label>
-                                        <input type="number" id="wordsearch-points" min="0" value="10" style="padding:0.3rem; text-align:center;">
-                                        <input type="number" id="wordsearch-count" min="0" value="0" style="padding:0.3rem; text-align:center;">
+                                        <input type="number" id="wordsearch-points" min="0" value="10"
+                                            style="padding:0.3rem; text-align:center;">
+                                        <input type="number" id="wordsearch-count" min="0" value="0"
+                                            style="padding:0.3rem; text-align:center;">
                                     </div>
                                     <div class="quiz-row" data-type="crossword"
                                         style="position:relative; display:grid; grid-template-columns: 1fr 70px 70px; gap:0.4rem; align-items:center; padding:0.75rem 0.55rem 0.55rem 0.55rem; border:1px solid var(--border-color); border-radius:10px; background: rgba(255,255,255,0.05);">
                                         <div style="position:absolute; top:6px; right:6px; display:flex; gap:0.25rem;">
-                                            <button type="button" class="btn text-btn order-up" data-type="crossword" title="Move up">↑</button>
-                                            <button type="button" class="btn text-btn order-down" data-type="crossword" title="Move down">↓</button>
+                                            <button type="button" class="btn text-btn order-up" data-type="crossword"
+                                                title="Move up">↑</button>
+                                            <button type="button" class="btn text-btn order-down" data-type="crossword"
+                                                title="Move down">↓</button>
                                         </div>
                                         <label style="font-size: 0.8rem; font-weight:600;">Crossword</label>
-                                        <input type="number" id="crossword-points" min="0" value="10" style="padding:0.3rem; text-align:center;">
-                                        <input type="number" id="crossword-count" min="0" value="0" style="padding:0.3rem; text-align:center;">
+                                        <input type="number" id="crossword-points" min="0" value="10"
+                                            style="padding:0.3rem; text-align:center;">
+                                        <input type="number" id="crossword-count" min="0" value="0"
+                                            style="padding:0.3rem; text-align:center;">
                                     </div>
                                 </div>
                                 <button id="generate-questions-btn" class="btn primary-btn"

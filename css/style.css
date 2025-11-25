@@ -588,6 +588,73 @@ select:focus {
     object-fit: contain;
 }
 
+/* Bulk Action Toolbar */
+.bulk-action-toolbar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.95), rgba(14, 165, 233, 0.95));
+    backdrop-filter: blur(20px);
+    border-top: 1px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 0 -10px 40px -10px rgba(0, 0, 0, 0.5);
+    padding: 1rem 2rem;
+    z-index: 50;
+    transform: translateY(100%);
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.bulk-action-toolbar:not(.hidden) {
+    transform: translateY(0);
+}
+
+.bulk-toolbar-content {
+    max-width: 1200px;
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.bulk-count {
+    font-weight: 600;
+    font-size: 1rem;
+    color: white;
+}
+
+.bulk-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.bulk-actions input[type="number"] {
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: #0f172a;
+}
+
+.bulk-actions .btn {
+    white-space: nowrap;
+}
+
+/* Selected row highlighting */
+tr.selected {
+    background: rgba(99, 102, 241, 0.15);
+    border-left: 3px solid var(--primary-color);
+}
+
+/* Checkbox styling */
+input[type="checkbox"] {
+    width: auto;
+    cursor: pointer;
+    accent-color: var(--primary-color);
+}
+
+
 /* Activity Styles */
 
 /* Flashcards */

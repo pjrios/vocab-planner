@@ -112,7 +112,7 @@ export class QuizMaker {
         this.typeOrderList = ['mc','tf','matching','short','synonym','wordsearch','crossword'];
 
         const updateOrderUI = () => {
-            const container = document.querySelector('.tool-section .tool-body') || document.querySelector('.tool-section');
+            const container = document.getElementById('quiz-type-list');
             if (container) {
                 this.typeOrderList.forEach(type => {
                     const row = document.querySelector(`.quiz-row[data-type="${type}"]`);

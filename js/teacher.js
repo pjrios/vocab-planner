@@ -32,6 +32,7 @@ class TeacherManager {
         this.activeStudentId = null;
         this.currentQuiz = null;
         this.currentRole = 'student';
+        this.selectedStudents = new Set();
 
         this.init();
     }
@@ -567,6 +568,20 @@ class TeacherManager {
                 this.handleCoinAdjust();
             });
         });
+
+        // Bulk Coin Distribution
+        $('#select-all-students')?.addEventListener('change', (e) => {
+            this.handleSelectAll(e.target.checked);
+        });
+
+        $('#bulk-add-coins-btn')?.addEventListener('click', () => {
+            this.handleBulkCoinAdjust();
+        });
+
+        $('#bulk-clear-selection-btn')?.addEventListener('click', () => {
+            this.clearSelection();
+        });
+
 
         // Meta fields
         $('#vocab-id').addEventListener('input', (e) => { this.vocabSet.id = e.target.value; this.triggerAutoSave(); });
@@ -1256,6 +1271,11 @@ class TeacherManager {
             const profile = student.studentProfile || {};
             const tr = createElement('tr');
 
+            // Add selected class if student is selected
+            if (this.selectedStudents.has(student.id)) {
+                tr.classList.add('selected');
+            }
+
             const name = profile.firstName && profile.lastName
                 ? `${profile.firstName} ${profile.lastName}`
                 : (profile.name || 'Unknown');
@@ -1265,6 +1285,9 @@ class TeacherManager {
                 : '-';
 
             tr.innerHTML = `
+                <td style="padding: 1rem;">
+                    <input type="checkbox" class="student-checkbox" data-id="${student.id}" ${this.selectedStudents.has(student.id) ? 'checked' : ''}>
+                </td>
                 <td style="padding: 1rem;">${name}</td>
                 <td style="padding: 1rem; color: var(--text-muted);">${student.email || profile.email || '-'}</td>
                 <td style="padding: 1rem;">${profile.grade || '-'}</td>
@@ -1279,7 +1302,7 @@ class TeacherManager {
             tbody.appendChild(tr);
         });
 
-        // Add listeners to new buttons
+        // Add listeners to new buttons and checkboxes
         $$('.view-details-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 const id = e.target.dataset.id;
@@ -1294,6 +1317,25 @@ class TeacherManager {
                 if (student) {
                     this.showStudentDetails(student);
                     $('#coin-adjust-input').focus();
+                }
+            });
+        });
+        $$('.student-checkbox').forEach(checkbox => {
+            checkbox.addEventListener('change', (e) => {
+                const id = e.target.dataset.id;
+                if (e.target.checked) {
+                    this.selectedStudents.add(id);
+                } else {
+                    this.selectedStudents.delete(id);
+                }
+                this.updateBulkToolbar();
+                this.updateSelectAllCheckbox();
+                // Update row highlighting
+                const row = e.target.closest('tr');
+                if (e.target.checked) {
+                    row.classList.add('selected');
+                } else {
+                    row.classList.remove('selected');
                 }
             });
         });
@@ -1412,6 +1454,110 @@ class TeacherManager {
         this.renderProgressTable();
         this.renderProgressStats();
     }
+
+    handleSelectAll(checked) {
+        if (checked) {
+            // Select all filtered students
+            this.filteredStudentData.forEach(student => {
+                this.selectedStudents.add(student.id);
+            });
+        } else {
+            // Deselect all
+            this.selectedStudents.clear();
+        }
+        this.renderProgressTable();
+        this.updateBulkToolbar();
+    }
+
+    clearSelection() {
+        this.selectedStudents.clear();
+        const selectAllCheckbox = $('#select-all-students');
+        if (selectAllCheckbox) selectAllCheckbox.checked = false;
+        this.renderProgressTable();
+        this.updateBulkToolbar();
+    }
+
+    updateBulkToolbar() {
+        const toolbar = $('#bulk-action-toolbar');
+        const count = $('#bulk-selected-count');
+
+        if (this.selectedStudents.size > 0) {
+            toolbar?.classList.remove('hidden');
+            if (count) {
+                count.textContent = `${this.selectedStudents.size} student${this.selectedStudents.size > 1 ? 's' : ''} selected`;
+            }
+        } else {
+            toolbar?.classList.add('hidden');
+        }
+    }
+
+    updateSelectAllCheckbox() {
+        const selectAllCheckbox = $('#select-all-students');
+        if (!selectAllCheckbox) return;
+
+        const visibleStudentIds = this.filteredStudentData.map(s => s.id);
+        const allVisibleSelected = visibleStudentIds.length > 0 &&
+            visibleStudentIds.every(id => this.selectedStudents.has(id));
+
+        selectAllCheckbox.checked = allVisibleSelected;
+        selectAllCheckbox.indeterminate = !allVisibleSelected &&
+            visibleStudentIds.some(id => this.selectedStudents.has(id));
+    }
+
+    async handleBulkCoinAdjust() {
+        if (this.selectedStudents.size === 0) {
+            alert('Please select at least one student.');
+            return;
+        }
+
+        const input = $('#bulk-coin-input');
+        const amount = parseInt(input?.value, 10) || 0;
+
+        if (amount <= 0) {
+            alert('Please enter a positive number of coins.');
+            return;
+        }
+
+        const confirmed = confirm(
+            `Add ${amount} coins to ${this.selectedStudents.size} selected student${this.selectedStudents.size > 1 ? 's' : ''}?`
+        );
+
+        if (!confirmed) return;
+
+        try {
+            const db = firebaseAuthService.getFirestore();
+            const { writeBatch } = await import('./firebaseService.js');
+            const batch = writeBatch(db);
+
+            // Update each selected student
+            for (const studentId of this.selectedStudents) {
+                const student = this.allStudentData.find(s => s.id === studentId);
+                if (!student) continue;
+
+                const newTotal = Math.max(0, (student.coins || 0) + amount);
+                const ref = doc(db, 'studentProgress', studentId);
+                batch.set(ref, { coins: newTotal, updatedAt: serverTimestamp() }, { merge: true });
+
+                // Update local data
+                student.coins = newTotal;
+                const filteredItem = this.filteredStudentData.find(s => s.id === studentId);
+                if (filteredItem) filteredItem.coins = newTotal;
+            }
+
+            await batch.commit();
+
+            alert(`Successfully added ${amount} coins to ${this.selectedStudents.size} student${this.selectedStudents.size > 1 ? 's' : ''}!`);
+
+            // Clear selection and refresh UI
+            this.clearSelection();
+            this.renderProgressTable();
+            this.renderProgressStats();
+        } catch (error) {
+            console.error('Bulk coin adjustment failed:', error);
+            alert('Failed to update coins. Please try again.');
+        }
+    }
+
 
     renderProgressStats() {
         const total = this.allStudentData.length;
