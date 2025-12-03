@@ -34,8 +34,9 @@
                     <button id="google-sign-out-btn" class="btn text-btn" style="font-size: 0.875rem;">Sign
                         Out</button>
                 </div>
-                <div id="guest-status" style="font-size:0.85rem; color:var(--text-muted);">
-                    🔒 Guest mode – progress stored on this device
+                <div id="guest-status" style="display:none; align-items: center; gap: 1rem;">
+                    <span style="font-size:0.85rem; color:var(--text-muted);">🔒 Guest mode</span>
+                    <button id="guest-signin-btn" class="btn text-btn" style="font-size: 0.875rem;">Sign In</button>
                 </div>
             </div>
         </header>
@@ -209,6 +210,7 @@
                         <div id="game-stage" class="hidden">
                             <div class="game-header">
                                 <div id="game-timer">Time: 0:00</div>
+                                <div id="game-score" style="display: none; font-weight: bold; color: var(--primary-color);">Score: 0</div>
                                 <button id="add-time-btn" class="btn accent-btn">+1 Min (10 Coins)</button>
                                 <button id="exit-game-btn" class="btn secondary-btn">Exit</button>
                             </div>

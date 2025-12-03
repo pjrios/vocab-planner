@@ -42,7 +42,15 @@ class StudentManager {
         this.progressData = {};
         this.activityInstance = null;
         this.currentUser = null;
-        this.coins = 0;
+        this.coins = 0; // Legacy support - will be replaced by coinData
+        this.coinData = {
+            balance: 0,
+            giftCoins: 0,
+            totalEarned: 0,
+            totalSpent: 0,
+            totalGifted: 0
+        };
+        this.coinHistory = [];
         this.currentRole = 'student';
 
         // Game variables
@@ -57,9 +65,15 @@ class StudentManager {
             { id: 'flappy-bird', name: 'Flappy Bird', icon: '🐦', desc: 'Fly through pipes!' },
             { id: 'space-invaders', name: 'Space Invaders', icon: '👾', desc: 'Defend Earth!' },
             { id: 'target-shooter', name: 'Target Shooter', icon: '🎯', desc: 'Hit the targets!' },
-            { id: 'pong', name: 'Pong', icon: '🏓', desc: 'Classic paddle game!' },
-            { id: 'whack-a-mole', name: 'Whack-a-Mole', icon: '🎪', desc: 'Whack the moles!' }
+            { id: 'pong', name: 'Pong', icon: '🏓', desc: 'Use W/S keys to move!' },
+            { id: 'whack-a-mole', name: 'Whack-a-Mole', icon: '🎪', desc: 'Whack the moles!' },
+            { id: 'level-devil', name: 'Level Devil', icon: '👺', desc: 'Expect the unexpected!' },
+            { id: 'ball-roll-3d', name: '3D Ball Roll', icon: '⚽', desc: 'Roll the ball in 3D!' },
+            { id: 'appel', name: 'Appel', icon: '🍎', desc: 'Catch the apples!' },
+            { id: 'ball-blast', name: 'Ball Blast', icon: '💥', desc: 'Blast the balls!' }
         ];
+        // HTML/Scratch games that don't have leaderboards
+        this.htmlGames = ['level-devil', 'ball-roll-3d', 'appel', 'ball-blast'];
         this.currentGameIndex = 0;
         this.authInitialized = false;
         this.cloudVocabs = [];
@@ -77,9 +91,27 @@ class StudentManager {
         console.log('Listeners attached');
 
         // Default view/state
+        // Default view/state
         this.switchView('loading-view');
-        this.setAuthStatus('Guest Mode');
-        this.updateGuestStatus(true);
+
+        // Check if we expect to be logged in
+        const wasLoggedIn = localStorage.getItem('was_logged_in') === 'true';
+        const hasLocalProfile = this.studentProfile && (this.studentProfile.firstName || this.studentProfile.name);
+
+        if (wasLoggedIn && hasLocalProfile) {
+            console.log('Optimistic login: showing dashboard immediately');
+            this.setAuthStatus('Resuming session...');
+            this.updateHeader();
+            this.renderDashboard();
+            this.switchView('main-menu-view');
+            // We still let initFirebaseAuth run to verify token and sync
+        } else if (wasLoggedIn) {
+            this.setAuthStatus('Resuming session...');
+        } else {
+            this.setAuthStatus('Guest Mode');
+            this.updateGuestStatus(true);
+            this.switchView('main-menu-view');
+        }
 
         // Load manifest and local data
         await this.loadManifest();
@@ -88,6 +120,30 @@ class StudentManager {
         this.updateHeader();
 
         await this.initFirebaseAuth();
+    }
+
+    // Migrate old coin structure to new structure
+    migrateCoinData(data) {
+        // If already new format, return as-is
+        if (data.coinData) {
+            return {
+                coinData: data.coinData,
+                coinHistory: data.coinHistory || []
+            };
+        }
+
+        // Migrate from old format
+        const oldCoins = data.coins || 0;
+        return {
+            coinData: {
+                balance: oldCoins,
+                giftCoins: 0,
+                totalEarned: oldCoins, // Estimate - assume all were earned
+                totalSpent: 0,
+                totalGifted: 0
+            },
+            coinHistory: []
+        };
     }
 
     loadLocalProgress() {
@@ -100,7 +156,14 @@ class StudentManager {
                     if (this.progressData.studentProfile && this.progressData.studentProfile.name) {
                         this.studentProfile = this.progressData.studentProfile;
                     }
-                    this.coins = this.progressData.coins || 0;
+                    
+                    // Migrate coin data
+                    const migrated = this.migrateCoinData(parsed);
+                    this.coinData = migrated.coinData;
+                    this.coinHistory = migrated.coinHistory;
+                    
+                    // Legacy support
+                    this.coins = this.coinData.balance;
                     this.updateCoinDisplay();
                 }
             }
@@ -108,13 +171,25 @@ class StudentManager {
             console.error('Error loading progress:', e);
             // Reset if corrupt
             this.progressData = { studentProfile: {}, units: {} };
+            this.coinData = {
+                balance: 0,
+                giftCoins: 0,
+                totalEarned: 0,
+                totalSpent: 0,
+                totalGifted: 0
+            };
+            this.coinHistory = [];
         }
     }
 
     saveLocalProgress(skipCloud = false) {
         try {
             this.progressData.studentProfile = this.studentProfile;
+            // Save both old and new format for compatibility
+            this.coins = this.coinData.balance; // Legacy support
             this.progressData.coins = this.coins;
+            this.progressData.coinData = this.coinData;
+            this.progressData.coinHistory = this.coinHistory;
             localStorage.setItem('student_progress', JSON.stringify(this.progressData));
             if (!skipCloud) {
                 this.scheduleCloudSync();
@@ -375,33 +450,74 @@ class StudentManager {
             const db = firebaseAuthService.getFirestore();
             const docRef = doc(db, 'studentProgress', this.currentUser.uid);
             const snapshot = await getDoc(docRef);
+
             if (snapshot.exists()) {
                 const data = snapshot.data();
 
-                // Preserve local coins if they're higher (prevents losing coins during sync)
-                const cloudCoins = data.coins || 0;
-                const localCoins = this.coins || 0;
-                const finalCoins = Math.max(cloudCoins, localCoins);
+                // Migrate coin data from cloud
+                const cloudCoinData = this.migrateCoinData(data);
+                const cloudGiftCoins = cloudCoinData.coinData.giftCoins || 0;
+                const localGiftCoins = this.coinData.giftCoins || 0;
+
+                // Merge coin data - preserve local earned/spent, but use cloud giftCoins
+                // For balance: if we have recent local transactions, prefer local (more recent)
+                // Otherwise, use max to prevent losing coins
+                const localRecentTransactions = this.coinHistory.slice(-10).some(h => 
+                    h.type === 'spend' || h.type === 'earn' || h.type === 'accept'
+                );
+                const mergedBalance = localRecentTransactions 
+                    ? this.coinData.balance  // Use local if we have recent activity
+                    : Math.max(this.coinData.balance, cloudCoinData.coinData.balance);
+                
+                this.coinData = {
+                    balance: mergedBalance,
+                    giftCoins: cloudGiftCoins, // Always use cloud giftCoins (teacher updates)
+                    totalEarned: Math.max(this.coinData.totalEarned, cloudCoinData.coinData.totalEarned),
+                    totalSpent: Math.max(this.coinData.totalSpent, cloudCoinData.coinData.totalSpent),
+                    totalGifted: Math.max(this.coinData.totalGifted, cloudCoinData.coinData.totalGifted)
+                };
+
+                // Check for new gifts
+                if (cloudGiftCoins > localGiftCoins) {
+                    const newGifts = cloudGiftCoins - localGiftCoins;
+                    this.showNotificationBadge();
+                    // Don't auto-accept, wait for user to click accept
+                }
+
+                // Legacy support
+                this.coins = this.coinData.balance;
 
                 this.progressData = {
                     studentProfile: data.studentProfile || this.studentProfile,
                     units: data.units || {},
-                    coins: finalCoins
+                    coins: this.coins,
+                    coinData: this.coinData,
+                    coinHistory: data.coinHistory || this.coinHistory || []
                 };
-                this.coins = finalCoins;
+                this.coinHistory = this.progressData.coinHistory;
                 this.updateCoinDisplay();
                 this.studentProfile = this.progressData.studentProfile || this.studentProfile;
                 await this.restoreImagesFromProgress();
                 this.saveLocalProgress(true);
 
-                // If local coins were higher, save back to cloud immediately
-                if (localCoins > cloudCoins) {
-                    console.log(`Local coins (${localCoins}) higher than cloud (${cloudCoins}), syncing...`);
+                // Sync if local balance is higher
+                if (this.coinData.balance > cloudCoinData.coinData.balance) {
                     await this.saveProgressToCloud();
                 } else {
                     this.setAuthStatus('☁️ Synced');
                 }
             } else {
+                // New user or no cloud data - Welcome Bonus
+                if (this.coinData.balance === 0) {
+                    this.coinData.balance = 100;
+                    this.coinData.totalEarned = 100;
+                    this.addCoinHistory('earn', 100, 'welcome', 'Welcome bonus!');
+                    this.coins = 100; // Legacy
+                    this.updateCoinDisplay();
+                    this.showToast('🎉 Welcome! You received 100 starting coins!');
+                    this.saveLocalProgress();
+                    await this.saveProgressToCloud();
+                }
                 this.setAuthStatus('☁️ Ready');
             }
         } catch (error) {
@@ -410,11 +526,61 @@ class StudentManager {
         }
     }
 
+    showToast(message, duration = 3000) {
+        let toast = document.getElementById('student-toast');
+        if (!toast) {
+            toast = document.createElement('div');
+            toast.id = 'student-toast';
+            toast.style.cssText = `
+                position: fixed;
+                top: 20px;
+                left: 50%;
+                transform: translateX(-50%);
+                background: rgba(16, 185, 129, 0.95);
+                color: white;
+                padding: 12px 24px;
+                border-radius: 50px;
+                font-weight: bold;
+                box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+                z-index: 10000;
+                opacity: 0;
+                transition: opacity 0.3s, transform 0.3s;
+                pointer-events: none;
+            `;
+            document.body.appendChild(toast);
+        }
+
+        toast.textContent = message;
+        toast.style.opacity = '1';
+        toast.style.transform = 'translateX(-50%) translateY(0)';
+
+        setTimeout(() => {
+            toast.style.opacity = '0';
+            toast.style.transform = 'translateX(-50%) translateY(-20px)';
+        }, duration);
+    }
+
     scheduleCloudSync() {
         if (!this.currentUser) return;
         this.setAuthStatus('☁️ Saving...');
         clearTimeout(this.cloudSaveTimeout);
         this.cloudSaveTimeout = setTimeout(() => this.saveProgressToCloud(), 1000);
+    }
+
+    // Add entry to coin history
+    addCoinHistory(type, amount, source, description = '') {
+        const entry = {
+            type: type, // 'gift', 'earn', 'spend', 'accept'
+            amount: amount,
+            timestamp: new Date().toISOString(),
+            source: source, // 'teacher', 'activity', 'game', 'welcome'
+            description: description
+        };
+        this.coinHistory.push(entry);
+        // Keep only last 100 entries to prevent bloat
+        if (this.coinHistory.length > 100) {
+            this.coinHistory = this.coinHistory.slice(-100);
+        }
     }
 
     async saveProgressToCloud() {
@@ -425,29 +591,76 @@ class StudentManager {
 
             // Get current cloud data first to prevent overwriting newer data
             const snapshot = await getDoc(docRef);
-            let cloudCoins = 0;
+            let cloudCoinData = null;
             if (snapshot.exists()) {
-                cloudCoins = snapshot.data().coins || 0;
+                const data = snapshot.data();
+                cloudCoinData = this.migrateCoinData(data);
             }
 
-            // Only update if local coins are equal or higher (prevents race condition)
-            const finalCoins = Math.max(this.coins, cloudCoins);
+            // Merge coin data - preserve cloud giftCoins (teacher updates), but use local if we just accepted
+            // If local giftCoins is 0 and cloud has giftCoins, keep cloud (teacher just added)
+            // If local giftCoins is 0 and cloud is 0, use 0 (already accepted)
+            // If local giftCoins > 0, use local (shouldn't happen, but handle it)
+            let mergedGiftCoins = cloudCoinData?.coinData.giftCoins || this.coinData.giftCoins;
+            // If we just accepted (local is 0 but was > 0 before), use 0
+            if (this.coinData.giftCoins === 0 && cloudCoinData?.coinData.giftCoins > 0) {
+                // Check if we recently accepted by looking at history
+                const recentAccept = this.coinHistory.slice(-5).some(h => h.type === 'accept');
+                if (recentAccept) {
+                    mergedGiftCoins = 0; // We just accepted, save 0 to cloud
+                }
+            }
+            
+            // Determine which balance to use
+            // If we have recent transactions (spend/earn), use local balance (more recent)
+            // Otherwise, use the higher balance (to prevent losing coins)
+            const recentTransactions = this.coinHistory.slice(-10).some(h => 
+                h.type === 'spend' || h.type === 'earn' || h.type === 'accept'
+            );
+            let mergedBalance;
+            if (recentTransactions) {
+                // Recent activity - use local balance (it's more up-to-date)
+                mergedBalance = this.coinData.balance;
+            } else {
+                // No recent activity - use max to prevent losing coins
+                mergedBalance = Math.max(this.coinData.balance, cloudCoinData?.coinData.balance || 0);
+            }
+            
+            const mergedCoinData = {
+                balance: mergedBalance,
+                giftCoins: mergedGiftCoins,
+                totalEarned: Math.max(this.coinData.totalEarned, cloudCoinData?.coinData.totalEarned || 0),
+                totalSpent: Math.max(this.coinData.totalSpent, cloudCoinData?.coinData.totalSpent || 0),
+                totalGifted: Math.max(this.coinData.totalGifted, cloudCoinData?.coinData.totalGifted || 0)
+            };
+
+            // Only update local if cloud had more balance AND we don't have recent transactions
+            if (cloudCoinData && cloudCoinData.coinData.balance > this.coinData.balance && !recentTransactions) {
+                this.coinData.balance = cloudCoinData.coinData.balance;
+            }
+
+            // Merge coin history (keep both, deduplicate by timestamp)
+            const mergedHistory = [...(cloudCoinData?.coinHistory || []), ...this.coinHistory]
+                .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+                .slice(-100); // Keep last 100
 
             const payload = {
                 studentProfile: this.studentProfile,
                 units: this.progressData.units || {},
-                coins: finalCoins,
+                coins: mergedCoinData.balance, // Legacy support
+                coinData: mergedCoinData,
+                coinHistory: mergedHistory,
                 email: this.currentUser?.email || this.studentProfile.email || '',
                 role: this.currentRole || 'student',
                 updatedAt: serverTimestamp()
             };
             await setDoc(docRef, payload, { merge: true });
 
-            // Update local coins if cloud had more
-            if (finalCoins > this.coins) {
-                this.coins = finalCoins;
-                this.updateCoinDisplay();
-            }
+            // Update local
+            this.coinData = mergedCoinData;
+            this.coinHistory = mergedHistory;
+            this.coins = this.coinData.balance; // Legacy
+            this.updateCoinDisplay();
 
             this.setAuthStatus('☁️ Synced');
         } catch (error) {
@@ -513,6 +726,7 @@ class StudentManager {
 
     async handleFirebaseSignIn(user) {
         this.currentUser = user;
+        localStorage.setItem('was_logged_in', 'true');
         await this.fetchAndSetRole(user);
         this.setAuthStatus('🔐 Signed in');
         this.updateGuestStatus(false);
@@ -548,13 +762,14 @@ class StudentManager {
 
     handleFirebaseSignOut() {
         this.currentUser = null;
+        localStorage.removeItem('was_logged_in');
         if (this.cloudSaveTimeout) {
             clearTimeout(this.cloudSaveTimeout);
             this.cloudSaveTimeout = null;
         }
         this.updateGuestStatus(true);
         this.setAuthStatus('Guest mode (local only)');
-        this.switchView('login-view');
+        this.switchView('main-menu-view');
     }
 
     switchView(viewId) {
@@ -586,8 +801,8 @@ class StudentManager {
             this.switchView('arcade-view');
             this.updateArcadeUI();
             this.updateGameSelectionUI();
-            // Load initial leaderboard
-            this.loadLeaderboard(this.games[this.currentGameIndex].id);
+            // Load initial leaderboard (or hide if HTML game)
+            this.updateLeaderboardGame();
         });
 
         this.addListener('#back-to-main-menu-btn', 'click', () => {
@@ -617,12 +832,12 @@ class StudentManager {
         // Note: #play-current-game-btn listener is attached dynamically in updateGameSelectionUI()
 
 
-        this.addListener('#add-time-btn', 'click', () => {
+        this.addListener('#add-time-btn', 'click', async () => {
             const settings = (this.currentVocab && this.currentVocab.activitySettings) ? this.currentVocab.activitySettings : {};
             const exchangeRate = settings.exchangeRate !== undefined ? settings.exchangeRate : 10;
             const extensionSeconds = 60;
 
-            if (this.deductCoins(exchangeRate)) {
+            if (await this.deductCoins(exchangeRate)) {
                 this.addGameTime(extensionSeconds);
             } else {
                 alert(`You need ${exchangeRate} coins to add time.`);
@@ -672,6 +887,11 @@ class StudentManager {
             e.preventDefault();
             this.switchView('vocab-selection-view');
             this.checkProfile(); // Proceed to profile check -> dashboard
+        });
+
+        // Guest Sign In Button
+        this.addListener('#guest-signin-btn', 'click', () => {
+            this.switchView('login-view');
         });
 
         this.addListener('#google-sign-out-btn', 'click', async () => {
@@ -832,7 +1052,7 @@ class StudentManager {
     updateGuestStatus(isGuest) {
         const guestEl = $('#guest-status');
         if (guestEl) {
-            guestEl.style.display = isGuest ? 'block' : 'none';
+            guestEl.style.display = isGuest ? 'flex' : 'none';
         }
         const userInfo = $('#google-user-info');
         if (userInfo && isGuest) {
@@ -951,8 +1171,11 @@ class StudentManager {
     // Initialize immediately if DOM is already ready, otherwise wait
 
 
-    addCoins(amount) {
-        this.coins += amount;
+    addCoins(amount, source = 'activity', description = '') {
+        this.coinData.balance += amount;
+        this.coinData.totalEarned += amount;
+        this.coins = this.coinData.balance; // Legacy support
+        this.addCoinHistory('earn', amount, source, description);
         this.updateCoinDisplay();
         this.saveLocalProgress();
 
@@ -964,22 +1187,243 @@ class StudentManager {
         }
     }
 
-    deductCoins(amount) {
-        if (this.coins >= amount) {
-            this.coins -= amount;
+    async deductCoins(amount) {
+        if (this.coinData.balance >= amount) {
+            this.coinData.balance -= amount;
+            this.coinData.totalSpent += amount;
+            this.coins = this.coinData.balance; // Legacy support
+            this.addCoinHistory('spend', amount, 'game', 'Spent on game');
             this.updateCoinDisplay();
             this.saveLocalProgress();
+            
+            // Immediately save to cloud to prevent sync issues
+            try {
+                await this.saveProgressToCloud();
+            } catch (error) {
+                console.error('Error saving coin deduction to cloud:', error);
+                // Don't fail the deduction if cloud save fails
+            }
+            
             return true;
         }
         return false;
     }
 
+    async acceptGiftCoins() {
+        if (this.coinData.giftCoins <= 0) {
+            this.hideNotificationBadge();
+            return;
+        }
+
+        const amount = this.coinData.giftCoins;
+        
+        // Immediately hide badge to prevent multiple clicks
+        this.hideNotificationBadge();
+        
+        // Update coin data
+        this.coinData.balance += amount;
+        this.coinData.totalGifted += amount;
+        this.addCoinHistory('accept', amount, 'teacher', 'Accepted gift from teacher');
+        
+        // Reset giftCoins BEFORE saving
+        this.coinData.giftCoins = 0;
+        this.coins = this.coinData.balance; // Legacy support
+        
+        // Update display immediately
+        this.updateCoinDisplay();
+        this.showToast(`🎉 You received ${amount} coins!`);
+        
+        // Save to cloud immediately with giftCoins = 0
+        try {
+            const db = firebaseAuthService.getFirestore();
+            const docRef = doc(db, 'studentProgress', this.currentUser.uid);
+            
+            // Get current data
+            const snapshot = await getDoc(docRef);
+            let existingCoinData = this.coinData;
+            if (snapshot.exists()) {
+                const data = snapshot.data();
+                if (data.coinData) {
+                    existingCoinData = data.coinData;
+                }
+            }
+            
+            // Save with giftCoins explicitly set to 0
+            await setDoc(docRef, {
+                coinData: {
+                    balance: this.coinData.balance,
+                    giftCoins: 0, // Explicitly set to 0
+                    totalEarned: this.coinData.totalEarned,
+                    totalSpent: this.coinData.totalSpent,
+                    totalGifted: this.coinData.totalGifted
+                },
+                coinHistory: this.coinHistory.slice(-100),
+                coins: this.coinData.balance, // Legacy support
+                updatedAt: serverTimestamp()
+            }, { merge: true });
+            
+            this.saveLocalProgress();
+        } catch (error) {
+            console.error('Error saving after accepting coins:', error);
+            // If save fails, restore the gift coins so user can try again
+            this.coinData.giftCoins = amount;
+            this.coinData.balance -= amount;
+            this.coinData.totalGifted -= amount;
+            this.coins = this.coinData.balance;
+            this.updateCoinDisplay();
+            this.showToast('Error saving. Please try again.', 5000);
+        }
+    }
+
     updateCoinDisplay() {
         const coinEl = $('#coin-balance');
         if (coinEl) {
-            coinEl.textContent = `🪙 ${this.coins} `;
+            coinEl.textContent = `🪙 ${this.coinData.balance} `;
             coinEl.style.display = this.currentUser ? 'flex' : 'none';
         }
+        
+        // Update notification badge
+        if (this.coinData.giftCoins > 0) {
+            this.showNotificationBadge();
+        } else {
+            this.hideNotificationBadge();
+        }
+    }
+
+    showNotificationBadge() {
+        // Only show if there are actually gift coins
+        if (this.coinData.giftCoins <= 0) {
+            this.hideNotificationBadge();
+            return;
+        }
+
+        let badge = $('#coin-notification-badge');
+        if (!badge) {
+            // Create badge element
+            const coinEl = $('#coin-balance');
+            if (coinEl && coinEl.parentElement) {
+                badge = document.createElement('div');
+                badge.id = 'coin-notification-badge';
+                badge.style.cssText = `
+                    position: absolute;
+                    top: -8px;
+                    left: -8px;
+                    background: #ef4444;
+                    color: white;
+                    border-radius: 50%;
+                    width: 22px;
+                    height: 22px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-size: 11px;
+                    font-weight: bold;
+                    cursor: pointer;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+                    z-index: 100;
+                    border: 2px solid white;
+                `;
+                badge.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.showNotificationPanel();
+                });
+                coinEl.parentElement.style.position = 'relative';
+                coinEl.parentElement.appendChild(badge);
+            }
+        }
+        if (badge) {
+            badge.textContent = this.coinData.giftCoins > 99 ? '99+' : this.coinData.giftCoins;
+            badge.style.display = 'flex';
+        }
+    }
+
+    hideNotificationBadge() {
+        const badge = $('#coin-notification-badge');
+        if (badge) {
+            badge.style.display = 'none';
+        }
+    }
+
+    showNotificationPanel() {
+        // Remove existing panel if any
+        let panel = $('#coin-notification-panel');
+        if (panel) {
+            panel.remove();
+        }
+
+        if (this.coinData.giftCoins <= 0) {
+            return;
+        }
+
+        // Create notification panel
+        panel = document.createElement('div');
+        panel.id = 'coin-notification-panel';
+        panel.style.cssText = `
+            position: fixed;
+            top: 60px;
+            right: 20px;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+            padding: 1.5rem;
+            min-width: 300px;
+            max-width: 400px;
+            z-index: 10000;
+            animation: slideIn 0.3s ease-out;
+        `;
+
+        panel.innerHTML = `
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <h3 style="margin: 0; color: var(--primary-color);">💰 Pending Coins</h3>
+                <button id="close-notification-panel" style="background: none; border: none; font-size: 24px; cursor: pointer; color: #666;">&times;</button>
+            </div>
+            <div style="margin-bottom: 1rem; padding: 1rem; background: #f0f9ff; border-radius: 8px; border-left: 4px solid #3b82f6;">
+                <div style="font-size: 18px; font-weight: bold; color: #1e40af; margin-bottom: 0.5rem;">
+                    +${this.coinData.giftCoins} Coins
+                </div>
+                <div style="color: #64748b; font-size: 14px;">
+                    From your teacher
+                </div>
+            </div>
+            <button id="accept-gift-coins" class="btn primary-btn" style="width: 100%; padding: 0.75rem; font-size: 16px; font-weight: bold;">
+                Accept ${this.coinData.giftCoins} Coins
+            </button>
+        `;
+
+        // Add animation
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes slideIn {
+                from {
+                    opacity: 0;
+                    transform: translateY(-20px);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateY(0);
+                }
+            }
+        `;
+        document.head.appendChild(style);
+
+        document.body.appendChild(panel);
+
+        // Event listeners
+        $('#close-notification-panel').addEventListener('click', () => panel.remove());
+        $('#accept-gift-coins').addEventListener('click', async () => {
+            await this.acceptGiftCoins();
+            panel.remove();
+        });
+
+        // Close on outside click
+        setTimeout(() => {
+            document.addEventListener('click', function closePanel(e) {
+                if (!panel.contains(e.target) && e.target.id !== 'coin-notification-badge') {
+                    panel.remove();
+                    document.removeEventListener('click', closePanel);
+                }
+            });
+        }, 100);
     }
 
     updateArcadeUI() {
@@ -1018,8 +1462,19 @@ class StudentManager {
     }
 
     async saveHighScore(gameId, score) {
-        if (!this.currentUser) return; // Only save if logged in
-        if (!this.studentProfile.grade) return; // Need grade for leaderboard
+        // Skip leaderboard for HTML/Scratch games
+        if (this.htmlGames.includes(gameId)) {
+            console.log('Skipping leaderboard save for HTML game:', gameId);
+            return;
+        }
+        if (!this.currentUser) {
+            console.log('Cannot save score: not logged in');
+            return; // Only save if logged in
+        }
+        if (!this.studentProfile.grade) {
+            console.log('Cannot save score: no grade set');
+            return; // Need grade for leaderboard
+        }
 
         try {
             const db = firebaseAuthService.getFirestore();
@@ -1034,7 +1489,8 @@ class StudentManager {
             const existingDoc = await getDoc(scoreDocRef);
 
             // Only update if this is a new high score or first time playing
-            if (!existingDoc.exists() || score > (existingDoc.data().score || 0)) {
+            const existingScore = existingDoc.exists() ? (existingDoc.data().score || 0) : 0;
+            if (!existingDoc.exists() || score > existingScore) {
                 await setDoc(scoreDocRef, {
                     userId: this.currentUser.uid,
                     name: this.studentProfile.name || 'Anonymous',
@@ -1044,13 +1500,13 @@ class StudentManager {
                     timestamp: serverTimestamp()
                 });
 
-                console.log('New high score saved!', score);
+                console.log('Score saved!', score, 'Previous:', existingScore);
                 // Refresh leaderboard if we're viewing this game
-                if (this.games[this.currentGameIndex].id === gameId) {
+                if (this.games && this.games[this.currentGameIndex] && this.games[this.currentGameIndex].id === gameId) {
                     this.loadLeaderboard(gameId);
                 }
             } else {
-                console.log('Score not high enough to update:', score);
+                console.log('Score not high enough to update. Current:', score, 'Existing:', existingScore);
             }
         } catch (error) {
             console.error('Error saving score:', error);
@@ -1061,7 +1517,15 @@ class StudentManager {
         const game = this.games[this.currentGameIndex];
         const nameEl = $('#current-game-name');
         if (nameEl) nameEl.textContent = game.name;
-        this.loadLeaderboard(game.id);
+        
+        // Hide leaderboard for HTML/Scratch games
+        const leaderboardContainer = $('#leaderboard-container');
+        if (this.htmlGames.includes(game.id)) {
+            if (leaderboardContainer) leaderboardContainer.style.display = 'none';
+        } else {
+            if (leaderboardContainer) leaderboardContainer.style.display = 'block';
+            this.loadLeaderboard(game.id);
+        }
     }
 
     async loadLeaderboard(gameId) {
@@ -1131,7 +1595,109 @@ class StudentManager {
         }
     }
 
-    startGame(type) {
+    /**
+     * Helper function to load HTML games via iframe
+     * @param {string} gameId - The game ID
+     * @param {string} htmlFile - Path to the HTML file
+     * @param {string} scoreMessageType - Optional message type for score reporting (e.g., 'level-devil-score')
+     * @param {Function} gameOverCallback - Callback when game ends
+     * @param {HTMLElement} canvas - Canvas element to hide
+     * @param {HTMLElement} gameStage - Game stage container
+     */
+    loadHTMLGame(gameId, htmlFile, scoreMessageType, gameOverCallback, canvas, gameStage) {
+        // Hide canvas and create iframe for the HTML game
+        canvas.style.display = 'none';
+        
+        // Remove existing iframe if any
+        const existingIframe = gameStage.querySelector(`#${gameId}-iframe`);
+        if (existingIframe) {
+            existingIframe.remove();
+        }
+        
+        // Create iframe for the HTML game
+        const iframe = document.createElement('iframe');
+        iframe.id = `${gameId}-iframe`;
+        iframe.src = htmlFile;
+        iframe.style.width = '100%';
+        iframe.style.height = '600px';
+        iframe.style.border = 'none';
+        iframe.style.borderRadius = '8px';
+        iframe.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1)';
+        iframe.style.maxWidth = '100%';
+        iframe.style.display = 'block';
+        
+        // Insert iframe after the canvas
+        canvas.parentNode.insertBefore(iframe, canvas.nextSibling);
+        
+        // Set up message listener for score reporting (if scoreMessageType is provided)
+        let messageHandler = null;
+        if (scoreMessageType) {
+            messageHandler = (event) => {
+                // Verify message is from our iframe (security check)
+                if (event.data && event.data.type === scoreMessageType) {
+                    const score = event.data.score || 0;
+                    const isGameOver = event.data.gameOver || false;
+                    
+                    console.log(`${gameId} score received:`, score, 'gameOver:', isGameOver);
+                    
+                    // Update score display dynamically
+                    const scoreDisplay = $('#game-score');
+                    if (scoreDisplay) {
+                        scoreDisplay.style.display = 'block';
+                        scoreDisplay.textContent = `Score: ${score.toLocaleString()}`;
+                    }
+                    
+                    // Store current score for final reporting
+                    this.currentGameScore = Math.max(this.currentGameScore || 0, score);
+                    
+                    // Save score periodically (not just on game over) to ensure it's saved
+                    if (score > 0 && score !== (this.lastSavedScore || 0)) {
+                        this.lastSavedScore = score;
+                        this.saveHighScore(gameId, score).catch(err => {
+                            console.error('Error saving score:', err);
+                        });
+                    }
+                    
+                    if (isGameOver) {
+                        // Game completed - call the callback with final score
+                        gameOverCallback(score);
+                        // Remove listener after game over
+                        window.removeEventListener('message', messageHandler);
+                    }
+                }
+            };
+            
+            window.addEventListener('message', messageHandler);
+        }
+        
+        // Initialize score tracking
+        this.currentGameScore = 0;
+        this.lastSavedScore = 0;
+        
+        // Store reference for cleanup
+        this.currentGame = {
+            gameType: gameId,
+            iframe: iframe,
+            messageHandler: messageHandler,
+            stop: () => {
+                // Remove message listener
+                if (messageHandler) {
+                    window.removeEventListener('message', messageHandler);
+                }
+                if (iframe && iframe.parentNode) {
+                    iframe.remove();
+                }
+                canvas.style.display = 'block';
+                // Hide score display
+                const scoreDisplay = $('#game-score');
+                if (scoreDisplay) {
+                    scoreDisplay.style.display = 'none';
+                }
+            }
+        };
+    }
+
+    async startGame(type) {
         // Use default settings if no vocab selected (accessed from Main Menu)
         const settings = (this.currentVocab && this.currentVocab.activitySettings) ? this.currentVocab.activitySettings : {};
         const exchangeRate = settings.exchangeRate !== undefined ? settings.exchangeRate : 10;
@@ -1141,7 +1707,7 @@ class StudentManager {
             return;
         }
 
-        if (this.deductCoins(exchangeRate)) {
+        if (await this.deductCoins(exchangeRate)) {
             $('#game-selection').classList.add('hidden');
             $('#game-stage').classList.remove('hidden');
 
@@ -1159,6 +1725,7 @@ class StudentManager {
 
             // Initialize Game Logic
             const canvas = $('#game-canvas');
+            const gameStage = $('#game-stage');
 
             // Create a callback that offers replay if time remains
             const gameOverCallback = (score) => {
@@ -1217,22 +1784,93 @@ class StudentManager {
                     this.currentGame = new module.WhackAMole(canvas, gameOverCallback);
                     this.currentGame.start();
                 });
+            } else if (type === 'level-devil') {
+                this.loadHTMLGame(
+                    'level-devil',
+                    'js/games/Level Devil - NOT A Troll Game.html',
+                    'level-devil-score',
+                    gameOverCallback,
+                    canvas,
+                    gameStage
+                );
+            } else if (type === 'ball-roll-3d') {
+                this.loadHTMLGame(
+                    'ball-roll-3d',
+                    encodeURI('js/games/[3D]ボールころころ2.html'),
+                    null, // No score reporting for this game
+                    gameOverCallback,
+                    canvas,
+                    gameStage
+                );
+            } else if (type === 'appel') {
+                this.loadHTMLGame(
+                    'appel',
+                    encodeURI('js/games/Appel v1.html'),
+                    null, // No score reporting for this game
+                    gameOverCallback,
+                    canvas,
+                    gameStage
+                );
+            } else if (type === 'ball-blast') {
+                this.loadHTMLGame(
+                    'ball-blast',
+                    encodeURI('js/games/Ball Blast - Mobile friendly.html'),
+                    null, // No score reporting for this game
+                    gameOverCallback,
+                    canvas,
+                    gameStage
+                );
             }
         }
     }
 
     stopCurrentGame() {
+        // Store current game type before cleanup for score saving
+        const currentGameType = this.currentGame?.gameType || null;
+        
         if (this.currentGame) {
-            this.currentGame.stop();
+            if (typeof this.currentGame.stop === 'function') {
+                this.currentGame.stop();
+            }
+            // Also clean up message handler if it exists
+            if (this.currentGame.messageHandler) {
+                window.removeEventListener('message', this.currentGame.messageHandler);
+            }
+            // Report final score if available (for games with score reporting)
+            if (this.currentGameScore !== undefined && this.currentGameScore > 0 && currentGameType) {
+                this.saveHighScore(currentGameType, this.currentGameScore);
+            }
             this.currentGame = null;
+            this.currentGameScore = 0;
         }
+        
+        // Clean up any remaining iframes (fallback cleanup)
+        const iframes = document.querySelectorAll('[id$="-iframe"]');
+        iframes.forEach(iframe => {
+            if (iframe.parentNode) {
+                iframe.remove();
+            }
+        });
+        
+        // Show canvas again
+        const canvas = $('#game-canvas');
+        if (canvas) {
+            canvas.style.display = 'block';
+        }
+        
+        // Hide score display
+        const scoreDisplay = $('#game-score');
+        if (scoreDisplay) {
+            scoreDisplay.style.display = 'none';
+        }
+        
         if (this.gameTimerInterval) {
             clearInterval(this.gameTimerInterval);
             this.gameTimerInterval = null;
         }
     }
 
-    pauseGame() {
+    async pauseGame() {
         if (!this.currentGame) return;
 
         // Check if we can auto-extend BEFORE pausing
@@ -1241,7 +1879,7 @@ class StudentManager {
 
         if (this.coins >= exchangeRate) {
             // Auto-deduct and add time - NO PAUSE, game continues seamlessly
-            this.deductCoins(exchangeRate);
+            await this.deductCoins(exchangeRate);
             this.addGameTime(60);
 
             // Visual feedback for extension (non-blocking)

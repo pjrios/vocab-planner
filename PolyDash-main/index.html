@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>PolyDash | Clone of Geometry Dash - God Mode Edition</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet preload prefetch" href="https://fonts.googleapis.com/css?family=Orbitron:700" as="style"
+        type="text/css" crossorigin="anonymous">
+</head>
+
+<body id="game-interface">
+    <div style="display:none;">
+        <!-- External resources removed for faster loading -->
+        <!-- Images and audio commented out to improve load time -->
+    </div>
+    <div id="canvas-set">
+        <canvas id="canvas-game"></canvas>
+        <canvas id="canvas-background"></canvas>
+    </div>
+
+    <!-- Add cache-busting timestamp to force reload -->
+    <script src="impossible-game.js?v=20251128-1856"></script>
+
+    <div
+        style="position: fixed; top: 10px; left: 10px; background: rgba(0,0,0,0.8); color: #00ff00; padding: 10px; font-family: monospace; font-size: 12px; z-index: 10000; border-radius: 5px;">
+        <strong>God Mode Edition v2.0</strong><br>
+        Press G = God Mode<br>
+        Press N = Skip Level<br>
+        Press +/- = Speed Control
+    </div>
+</body>
+
+</html>

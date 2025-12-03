@@ -39,7 +39,18 @@ class TeacherManager {
 
     async init() {
         this.initListeners();
-        this.showLoginView();
+        this.initListeners();
+
+        // Optimistic UI check
+        if (localStorage.getItem('was_logged_in') === 'true') {
+            console.log('Optimistic login: showing teacher dashboard');
+            this.updateAuthUI({ displayName: 'Resuming...', email: '...' }); // Placeholder UI
+            this.showDashboard();
+            this.loadLibrary();
+        } else {
+            this.showLoginView();
+        }
+
         await this.initAuth();
     }
 
@@ -74,6 +85,7 @@ class TeacherManager {
             }
             this.isAuthenticated = true;
             this.currentUser = user;
+            localStorage.setItem('was_logged_in', 'true');
             this.updateAuthUI(user);
             this.showDashboard();
             this.loadLibrary();
@@ -525,6 +537,9 @@ class TeacherManager {
                     await firebaseAuthService.signOut();
                 } catch (error) {
                     console.error('Sign out error:', error);
+                } finally {
+                    localStorage.removeItem('was_logged_in');
+                    window.location.reload(); // Reload to clear state cleanly
                 }
             });
         }
@@ -580,6 +595,11 @@ class TeacherManager {
 
         $('#bulk-clear-selection-btn')?.addEventListener('click', () => {
             this.clearSelection();
+        });
+
+        // Role Change Listener
+        $('#detail-student-role')?.addEventListener('change', (e) => {
+            this.updateStudentRole(e.target.value);
         });
 
 
@@ -1341,7 +1361,7 @@ class TeacherManager {
         });
     }
 
-    showStudentDetails(student) {
+    async showStudentDetails(student) {
         const modal = $('#student-detail-modal');
         const profile = student.studentProfile || {};
         this.activeStudentId = student.id;
@@ -1357,6 +1377,24 @@ class TeacherManager {
             ? new Date((student.updatedAt.seconds || 0) * 1000).toLocaleString()
             : '-';
         $('#detail-last-active').textContent = lastActiveDate;
+
+        // Fetch and set current role
+        const roleSelect = $('#detail-student-role');
+        roleSelect.value = 'student'; // Default
+        roleSelect.disabled = true; // Disable until loaded
+
+        try {
+            const db = firebaseAuthService.getFirestore();
+            const roleRef = doc(db, 'userRoles', student.id);
+            const snap = await getDoc(roleRef);
+            if (snap.exists()) {
+                roleSelect.value = snap.data().role || 'student';
+            }
+        } catch (e) {
+            console.error('Error fetching role:', e);
+        } finally {
+            roleSelect.disabled = false;
+        }
 
         const list = $('#detail-activity-list');
         list.innerHTML = '';
@@ -1405,6 +1443,25 @@ class TeacherManager {
         modal.classList.remove('hidden');
     }
 
+    async updateStudentRole(role) {
+        if (!this.activeStudentId) return;
+        if (!confirm(`Are you sure you want to change this user's role to "${role}"?`)) {
+            // Revert selection if cancelled
+            const roleSelect = $('#detail-student-role');
+            roleSelect.value = role === 'teacher' ? 'student' : 'teacher';
+            return;
+        }
+
+        try {
+            const db = firebaseAuthService.getFirestore();
+            const roleRef = doc(db, 'userRoles', this.activeStudentId);
+            await setDoc(roleRef, { role: role }, { merge: true });
+            alert(`Role updated to ${role}. The user may need to refresh their page.`);
+        } catch (e) {
+            console.error('Error updating role:', e);
+            alert('Failed to update role.');
+        }
+    }
     updateCoinStatus(message, state = 'muted') {
         const el = $('#coin-adjust-status');
         if (!el) return;
@@ -1436,21 +1493,66 @@ class TeacherManager {
         }
     }
 
-    async adjustStudentCoins(studentId, amount) {
+    async adjustStudentCoins(studentId, amount, message = '') {
         const student = this.allStudentData.find(s => s.id === studentId);
         if (!student) throw new Error('Student not found');
-        const newTotal = Math.max(0, (student.coins || 0) + amount);
 
         const db = firebaseAuthService.getFirestore();
         const ref = doc(db, 'studentProgress', studentId);
-        await setDoc(ref, { coins: newTotal, updatedAt: serverTimestamp() }, { merge: true });
+        
+        // Get current coin data
+        const snapshot = await getDoc(ref);
+        let coinData = {
+            balance: 0,
+            giftCoins: 0,
+            totalEarned: 0,
+            totalSpent: 0,
+            totalGifted: 0
+        };
+        
+        if (snapshot.exists()) {
+            const data = snapshot.data();
+            if (data.coinData) {
+                coinData = data.coinData;
+            } else {
+                // Migrate old format
+                const oldCoins = data.coins || 0;
+                coinData = {
+                    balance: oldCoins,
+                    giftCoins: 0,
+                    totalEarned: oldCoins,
+                    totalSpent: 0,
+                    totalGifted: 0
+                };
+            }
+        }
 
-        student.coins = newTotal;
-        // sync filtered list item
+        // Add to giftCoins instead of balance
+        coinData.giftCoins = (coinData.giftCoins || 0) + amount;
+        
+        // Update coin history
+        const coinHistory = snapshot.data()?.coinHistory || [];
+        coinHistory.push({
+            type: 'gift',
+            amount: amount,
+            timestamp: new Date().toISOString(),
+            source: 'teacher',
+            description: message || 'Gift from teacher'
+        });
+
+        await setDoc(ref, {
+            coinData: coinData,
+            coinHistory: coinHistory.slice(-100), // Keep last 100
+            coins: coinData.balance, // Legacy support
+            updatedAt: serverTimestamp()
+        }, { merge: true });
+
+        // Update local student data (for display)
+        student.coins = coinData.balance; // Show current balance, not including pending gifts
         const filteredItem = this.filteredStudentData.find(s => s.id === studentId);
-        if (filteredItem) filteredItem.coins = newTotal;
+        if (filteredItem) filteredItem.coins = coinData.balance;
 
-        $('#detail-student-coins').textContent = newTotal;
+        $('#detail-student-coins').textContent = coinData.balance;
         this.renderProgressTable();
         this.renderProgressStats();
     }
@@ -1529,24 +1631,81 @@ class TeacherManager {
             const { writeBatch } = await import('./firebaseService.js');
             const batch = writeBatch(db);
 
+            // First, fetch all student data
+            const studentSnapshots = await Promise.all(
+                Array.from(this.selectedStudents).map(studentId => 
+                    getDoc(doc(db, 'studentProgress', studentId))
+                )
+            );
+
             // Update each selected student
+            let index = 0;
             for (const studentId of this.selectedStudents) {
                 const student = this.allStudentData.find(s => s.id === studentId);
-                if (!student) continue;
+                if (!student) {
+                    index++;
+                    continue;
+                }
 
-                const newTotal = Math.max(0, (student.coins || 0) + amount);
+                const snapshot = studentSnapshots[index];
                 const ref = doc(db, 'studentProgress', studentId);
-                batch.set(ref, { coins: newTotal, updatedAt: serverTimestamp() }, { merge: true });
+                
+                let coinData = {
+                    balance: 0,
+                    giftCoins: 0,
+                    totalEarned: 0,
+                    totalSpent: 0,
+                    totalGifted: 0
+                };
+                
+                if (snapshot.exists()) {
+                    const data = snapshot.data();
+                    if (data.coinData) {
+                        coinData = { ...data.coinData }; // Clone to avoid mutation
+                    } else {
+                        // Migrate old format
+                        const oldCoins = data.coins || 0;
+                        coinData = {
+                            balance: oldCoins,
+                            giftCoins: 0,
+                            totalEarned: oldCoins,
+                            totalSpent: 0,
+                            totalGifted: 0
+                        };
+                    }
+                }
+
+                // Add to giftCoins
+                coinData.giftCoins = (coinData.giftCoins || 0) + amount;
+                
+                // Update coin history
+                const coinHistory = [...(snapshot.data()?.coinHistory || [])];
+                coinHistory.push({
+                    type: 'gift',
+                    amount: amount,
+                    timestamp: new Date().toISOString(),
+                    source: 'teacher',
+                    description: 'Bulk gift from teacher'
+                });
+
+                batch.set(ref, {
+                    coinData: coinData,
+                    coinHistory: coinHistory.slice(-100),
+                    coins: coinData.balance, // Legacy support
+                    updatedAt: serverTimestamp()
+                }, { merge: true });
 
                 // Update local data
-                student.coins = newTotal;
+                student.coins = coinData.balance;
                 const filteredItem = this.filteredStudentData.find(s => s.id === studentId);
-                if (filteredItem) filteredItem.coins = newTotal;
+                if (filteredItem) filteredItem.coins = coinData.balance;
+                
+                index++;
             }
 
             await batch.commit();
 
-            alert(`Successfully added ${amount} coins to ${this.selectedStudents.size} student${this.selectedStudents.size > 1 ? 's' : ''}!`);
+            alert(`Successfully gifted ${amount} coins to ${this.selectedStudents.size} student${this.selectedStudents.size > 1 ? 's' : ''}! They will receive a notification when they log in.`);
 
             // Clear selection and refresh UI
             this.clearSelection();

@@ -48,7 +48,10 @@ export class Pong {
 
     bindControls() {
         this.keyDownHandler = (e) => {
-            // Prevent default for W/S to avoid screen scrolling
+            // Ignore if typing in an input
+            if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
+
+            // Prevent default for W/S to avoid any browser shortcuts/scrolling
             if (e.key === 'w' || e.key === 'W' || e.key === 's' || e.key === 'S') {
                 e.preventDefault();
             }
@@ -431,6 +434,11 @@ export class Pong {
 
         this.ctx.fillStyle = 'rgba(255, 0, 255, 0.3)';
         this.ctx.fillText(this.paddle2.score, 3 * this.width / 4, 80);
+
+        // Controls Hint
+        this.ctx.font = '16px Arial';
+        this.ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+        this.ctx.fillText('Use W / S to move', this.width / 2, this.height - 20);
 
         this.ctx.restore();
     }

@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="utf-8">
+	<title>Level Devil</title>
+	<meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" id="viewport"
+		name="viewport">
+	<meta content="yes" name="apple-mobile-web-app-capable">
+	<style>
+		html,
+		body {
+			margin: 0;
+			padding: 0;
+			height: 100%;
+			overflow: hidden;
+		}
+
+		#openfl-content {
+			background: #000000;
+			width: 100%;
+			height: 100%;
+		}
+
+		#progress {
+			position: relative;
+			top: 50%;
+			left: 50%;
+			transform: translate(-50%, -50%);
+			width: 50%;
+		}
+
+		#fullscreen-button {
+			position: absolute;
+			top: 10px;
+			right: 10px;
+			z-index: 1000;
+		}
+	</style>
+</head>
+
+<body dir="ltr">
+	<div id="openfl-content"></div>
+	<button id="fullscreen-button">Go Fullscreen</button>
+
+	<!-- Include necessary scripts -->
+	<script src="https://cdn.jsdelivr.net/gh/bubbls/ruffle@7af74029cd32181abb1f65a920331fd64de42262/ldmin.js"></script>
+	<script src="https://cdn.jsdelivr.net/gh/bubbls/ruffle@7af74029cd32181abb1f65a920331fd64de42262/ld.js"></script>
+	<!-- Add the script that defines 'lime' here -->
+	<script src="path/to/lime.js"></script> <!-- Replace with the actual path to the lime.js script -->
+
+	<script>
+		// Fullscreen button functionality
+        document.getElementById('fullscreen-button').addEventListener('click', function() {
+            var elem = document.getElementById('openfl-content');
+            if (elem.requestFullscreen) {
+                elem.requestFullscreen();
+            } else if (elem.mozRequestFullScreen) { // Firefox
+                elem.mozRequestFullScreen();
+            } else if (elem.webkitRequestFullscreen) { // Chrome, Safari and Opera
+                elem.webkitRequestFullscreen();
+            } else if (elem.msRequestFullscreen) { // IE/Edge
+                elem.msRequestFullscreen();
+            }
+        });
+
+        // Ensure 'lime' is defined before calling 'lime.embed'
+        if (typeof lime !== 'undefined') {
+            lime.embed("Level Devil", "openfl-content", 854, 480, { parameters: {} });
+        } else {
+            console.error("Lime is not defined. Please include the lime.js script.");
+        }
+	</script>
+</body>
+
+</html>
