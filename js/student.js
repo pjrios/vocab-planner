@@ -377,17 +377,30 @@ class StudentManager {
             const snapshot = await getDoc(docRef);
             if (snapshot.exists()) {
                 const data = snapshot.data();
+
+                // Preserve local coins if they're higher (prevents losing coins during sync)
+                const cloudCoins = data.coins || 0;
+                const localCoins = this.coins || 0;
+                const finalCoins = Math.max(cloudCoins, localCoins);
+
                 this.progressData = {
                     studentProfile: data.studentProfile || this.studentProfile,
                     units: data.units || {},
-                    coins: data.coins || 0
+                    coins: finalCoins
                 };
-                this.coins = this.progressData.coins;
+                this.coins = finalCoins;
                 this.updateCoinDisplay();
                 this.studentProfile = this.progressData.studentProfile || this.studentProfile;
                 await this.restoreImagesFromProgress();
                 this.saveLocalProgress(true);
-                this.setAuthStatus('☁️ Synced');
+
+                // If local coins were higher, save back to cloud immediately
+                if (localCoins > cloudCoins) {
+                    console.log(`Local coins (${localCoins}) higher than cloud (${cloudCoins}), syncing...`);
+                    await this.saveProgressToCloud();
+                } else {
+                    this.setAuthStatus('☁️ Synced');
+                }
             } else {
                 this.setAuthStatus('☁️ Ready');
             }
@@ -409,15 +422,33 @@ class StudentManager {
         try {
             const db = firebaseAuthService.getFirestore();
             const docRef = doc(db, 'studentProgress', this.currentUser.uid);
+
+            // Get current cloud data first to prevent overwriting newer data
+            const snapshot = await getDoc(docRef);
+            let cloudCoins = 0;
+            if (snapshot.exists()) {
+                cloudCoins = snapshot.data().coins || 0;
+            }
+
+            // Only update if local coins are equal or higher (prevents race condition)
+            const finalCoins = Math.max(this.coins, cloudCoins);
+
             const payload = {
                 studentProfile: this.studentProfile,
                 units: this.progressData.units || {},
-                coins: this.coins,
+                coins: finalCoins,
                 email: this.currentUser?.email || this.studentProfile.email || '',
                 role: this.currentRole || 'student',
                 updatedAt: serverTimestamp()
             };
             await setDoc(docRef, payload, { merge: true });
+
+            // Update local coins if cloud had more
+            if (finalCoins > this.coins) {
+                this.coins = finalCoins;
+                this.updateCoinDisplay();
+            }
+
             this.setAuthStatus('☁️ Synced');
         } catch (error) {
             console.error('Failed to save progress to cloud:', error);

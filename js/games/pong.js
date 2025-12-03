@@ -48,6 +48,11 @@ export class Pong {
 
     bindControls() {
         this.keyDownHandler = (e) => {
+            // Prevent default for W/S to avoid screen scrolling
+            if (e.key === 'w' || e.key === 'W' || e.key === 's' || e.key === 'S') {
+                e.preventDefault();
+            }
+
             this.keys[e.key] = true;
 
             // QTE Input
@@ -176,11 +181,11 @@ export class Pong {
             this.qte.feedbackTimer--;
         }
 
-        // Player Movement
-        if (this.keys['w'] || this.keys['W'] || this.keys['ArrowUp']) {
+        // Player Movement (W/S keys only)
+        if (this.keys['w'] || this.keys['W']) {
             this.paddle1.y = Math.max(0, this.paddle1.y - 8);
         }
-        if (this.keys['s'] || this.keys['S'] || this.keys['ArrowDown']) {
+        if (this.keys['s'] || this.keys['S']) {
             this.paddle1.y = Math.min(this.height - this.paddle1.height, this.paddle1.y + 8);
         }
 
