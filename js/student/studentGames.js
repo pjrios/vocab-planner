@@ -70,11 +70,12 @@ export class StudentGames {
     }
 
     async saveHighScore(gameId, score, metadata = null) {
-        // Level Devil is special - it has leaderboard with metadata
-        if (gameId === 'level-devil') {
-            // Continue to save Level Devil scores
-        } else if (this.sm.htmlGames.includes(gameId)) {
-            return; // HTML games don't have leaderboards
+        // Games with leaderboards enabled
+        const gamesWithLeaderboard = ['level-devil', 'radius-raid', 'packabunchas', 'spacepi'];
+        
+        // Only save scores for games with leaderboards enabled
+        if (!gamesWithLeaderboard.includes(gameId)) {
+            return; // This game doesn't have leaderboard support
         }
         if (!this.sm.currentUser) {
             return; // Only save if logged in
@@ -96,8 +97,14 @@ export class StudentGames {
             const existingDoc = await getDoc(scoreDocRef);
 
             // Only update if this is a new high score or first time playing
+            // Note: SpacePi uses "lower is better" scoring, so invert the comparison
             const existingScore = existingDoc.exists() ? (existingDoc.data().score || 0) : 0;
-            if (!existingDoc.exists() || score > existingScore) {
+            const isLowerBetter = gameId === 'spacepi';
+            const isNewHighScore = isLowerBetter 
+                ? (!existingDoc.exists() || score < existingScore)
+                : (!existingDoc.exists() || score > existingScore);
+            
+            if (isNewHighScore) {
                 const scoreData = {
                     userId: this.sm.currentUser.uid,
                     name: this.sm.studentProfile.name || 'Anonymous',
@@ -134,15 +141,19 @@ export class StudentGames {
         const nameEl = $('#current-game-name');
         if (nameEl) nameEl.textContent = game.name;
         
-        // Show leaderboard for Level Devil, hide for other HTML games
+        // Games with score reporting enabled should show leaderboard
+        const gamesWithLeaderboard = ['level-devil', 'radius-raid', 'packabunchas', 'spacepi'];
+        
         const leaderboardContainer = $('#leaderboard-container');
-        if (game.id === 'level-devil') {
-            // Level Devil has leaderboard
+        if (gamesWithLeaderboard.includes(game.id)) {
+            // Show leaderboard for games with score reporting
             if (leaderboardContainer) leaderboardContainer.style.display = 'block';
             this.loadLeaderboard(game.id);
         } else if (this.sm.htmlGames.includes(game.id)) {
+            // Hide leaderboard for HTML games without score reporting
             if (leaderboardContainer) leaderboardContainer.style.display = 'none';
         } else {
+            // Show leaderboard for canvas-based games
             if (leaderboardContainer) leaderboardContainer.style.display = 'block';
             this.loadLeaderboard(game.id);
         }
@@ -164,14 +175,16 @@ export class StudentGames {
             const db = firebaseAuthService.getFirestore();
             const scoresRef = collection(db, 'scores');
 
-            // Query: Same grade, same game, order by score desc, limit 5
+            // Query: Same grade, same game, order by score (desc for higher=better, asc for lower=better)
             // Note: This requires a composite index in Firestore. 
             // If it fails, check console for index creation link.
+            // SpacePi uses "lower is better" scoring
+            const isLowerBetter = gameId === 'spacepi';
             const q = query(
                 scoresRef,
                 where('grade', '==', this.sm.studentProfile.grade),
                 where('gameId', '==', gameId),
-                orderBy('score', 'desc'),
+                orderBy('score', isLowerBetter ? 'asc' : 'desc'),
                 limit(5)
             );
 
@@ -244,7 +257,7 @@ export class StudentGames {
      * @param {HTMLElement} canvas - Canvas element to hide
      * @param {HTMLElement} gameStage - Game stage container
      */
-    loadHTMLGame(gameId, htmlFile, scoreMessageType, gameOverCallback, canvas, gameStage) {
+    async loadHTMLGame(gameId, htmlFile, scoreMessageType, gameOverCallback, canvas, gameStage) {
         // Hide canvas and create iframe for the HTML game
         canvas.style.display = 'none';
         
@@ -252,6 +265,64 @@ export class StudentGames {
         const existingIframe = gameStage.querySelector(`#${gameId}-iframe`);
         if (existingIframe) {
             existingIframe.remove();
+        }
+        
+        // Check if file exists for games that need building
+        // Note: galaxy_rider.html and glitch buster.html are standalone files, no build needed
+        const needsBuild = ['callisto'].includes(gameId);
+        if (needsBuild) {
+            let fileFound = false;
+            
+            // Check the original path
+            try {
+                const response = await fetch(htmlFile, { method: 'HEAD' });
+                if (response.ok) {
+                    fileFound = true;
+                }
+            } catch (e) {
+                // File doesn't exist
+            }
+            
+            // If not found, try source file as fallback (for callisto)
+            if (!fileFound) {
+                let fallbackPath = null;
+                if (gameId === 'callisto') {
+                    fallbackPath = 'js/games/js13k-callisto-main/src/index.html';
+                }
+                
+                // Check if source file exists
+                if (fallbackPath) {
+                    try {
+                        const fallbackResponse = await fetch(fallbackPath, { method: 'HEAD' });
+                        if (fallbackResponse.ok) {
+                            htmlFile = fallbackPath;
+                            fileFound = true;
+                            console.warn(`Using source file for ${gameId}: ${fallbackPath}`);
+                        }
+                    } catch (e) {
+                        // Source file doesn't exist
+                    }
+                }
+            }
+            
+            // If no file found, show error message
+            if (!fileFound) {
+                const errorDiv = document.createElement('div');
+                errorDiv.style.cssText = 'padding: 40px; text-align: center; background: #fff3cd; border: 2px solid #ffc107; border-radius: 8px; margin: 20px;';
+                errorDiv.innerHTML = `
+                    <h3 style="color: #856404; margin-bottom: 10px;">⚠️ Game Not Built</h3>
+                    <p style="color: #856404; margin-bottom: 20px;">
+                        This game needs to be built before it can be played.
+                    </p>
+                    <div style="background: white; padding: 15px; border-radius: 4px; text-align: left; display: inline-block; max-width: 500px;">
+                        <p style="margin: 5px 0; font-family: monospace; font-size: 0.9em; color: #333;">
+                            ${gameId === 'callisto' ? '<strong>Callisto:</strong><br>cd js/games/js13k-callisto-main<br>npm install<br>npm run build<br><br>Or run: <code>./build-games.command</code>' : ''}
+                        </p>
+                    </div>
+                `;
+                canvas.parentNode.insertBefore(errorDiv, canvas.nextSibling);
+                return;
+            }
         }
         
         // Create iframe for the HTML game
@@ -262,6 +333,7 @@ export class StudentGames {
         // Games with absolute positioning need specific dimensions to avoid cropping
         // SpacePi: 960x600 game area, uses top:50% positioning
         // Radius Raid: 800x600 canvas + 10px padding each side = 820x620, uses top:50% positioning
+        // Mystic Valley & Slash Knight: Full-screen Scratch games
         if (gameId === 'spacepi') {
             iframe.style.width = '100%';
             iframe.style.minWidth = '960px';
@@ -274,6 +346,20 @@ export class StudentGames {
             iframe.style.minWidth = '820px';
             iframe.style.height = '620px';
             iframe.style.minHeight = '620px';
+            iframe.style.display = 'block';
+            iframe.style.overflow = 'auto';
+        } else if (gameId === 'mystic-valley' || gameId === 'slash-knight') {
+            // Full-screen Scratch/TurboWarp games
+            iframe.style.width = '100%';
+            iframe.style.height = '100%';
+            iframe.style.minHeight = '600px';
+            iframe.style.display = 'block';
+            iframe.style.overflow = 'hidden';
+        } else if (gameId === 'black-hole-square' || gameId === 'glitch-buster' || gameId === 'callisto' || gameId === 'js13k2021') {
+            // Responsive games - let them size themselves
+            iframe.style.width = '100%';
+            iframe.style.height = '600px';
+            iframe.style.minHeight = '400px';
             iframe.style.display = 'block';
             iframe.style.overflow = 'auto';
         } else {
@@ -289,6 +375,25 @@ export class StudentGames {
         
         // Insert iframe after the canvas
         canvas.parentNode.insertBefore(iframe, canvas.nextSibling);
+        
+        // Inject score reporting script into the iframe (if scoreMessageType is provided)
+        if (scoreMessageType) {
+            iframe.onload = () => {
+                try {
+                    const iframeWindow = iframe.contentWindow;
+                    const iframeDoc = iframe.contentDocument || iframeWindow.document;
+                    
+                    // Create and inject score monitoring script
+                    const script = iframeDoc.createElement('script');
+                    script.textContent = this.getScoreMonitoringScript(gameId, scoreMessageType);
+                    iframeDoc.body.appendChild(script);
+                } catch (error) {
+                    // Cross-origin restrictions may prevent script injection
+                    // In that case, we'll rely on the game's own postMessage if it has one
+                    console.warn(`Could not inject score monitoring for ${gameId}:`, error);
+                }
+            };
+        }
         
         // Set up message listener for score reporting (if scoreMessageType is provided)
         let messageHandler = null;
@@ -363,6 +468,181 @@ export class StudentGames {
                 canvas.style.display = 'block';
             }
         };
+    }
+
+    /**
+     * Generate score monitoring script for a specific game
+     * @param {string} gameId - The game ID
+     * @param {string} messageType - The postMessage type to use
+     * @returns {string} JavaScript code to inject
+     */
+    getScoreMonitoringScript(gameId, messageType) {
+        if (gameId === 'radius-raid') {
+            return `
+                (function() {
+                    let lastScore = 0;
+                    let lastState = '';
+                    let checkInterval = setInterval(function() {
+                        try {
+                            // Radius Raid uses $.score and $.state
+                            if (typeof $ !== 'undefined' && $.score !== undefined) {
+                                const currentScore = $.score || 0;
+                                const currentState = $.state || '';
+                                
+                                // Report score updates
+                                if (currentScore !== lastScore) {
+                                    lastScore = currentScore;
+                                    window.parent.postMessage({
+                                        type: '${messageType}',
+                                        score: currentScore,
+                                        gameOver: false
+                                    }, '*');
+                                }
+                                
+                                // Check for game over (state changes to 'gameover' or 'menu')
+                                if (currentState === 'gameover' && lastState !== 'gameover') {
+                                    // Final score is stored in $.storage['score']
+                                    const finalScore = (typeof $.storage !== 'undefined' && $.storage['score']) 
+                                        ? Math.max($.storage['score'], $.score) 
+                                        : $.score;
+                                    
+                                    window.parent.postMessage({
+                                        type: '${messageType}',
+                                        score: finalScore || 0,
+                                        gameOver: true
+                                    }, '*');
+                                    
+                                    clearInterval(checkInterval);
+                                }
+                                
+                                lastState = currentState;
+                            }
+                        } catch (e) {
+                            console.warn('Score monitoring error:', e);
+                        }
+                    }, 500); // Check every 500ms
+                    
+                    // Cleanup on unload
+                    window.addEventListener('beforeunload', function() {
+                        clearInterval(checkInterval);
+                    });
+                })();
+            `;
+        } else if (gameId === 'spacepi') {
+            return `
+                (function() {
+                    let lastScore = -1;
+                    let lastLevel = -1;
+                    let lastMenuMode = true;
+                    let checkInterval = setInterval(function() {
+                        try {
+                            // SpacePi uses sp.levelStats.score and sp.level
+                            // The game instance is stored as 'sp' in global scope
+                            let game = null;
+                            if (typeof sp !== 'undefined' && sp.levelStats) {
+                                game = sp;
+                            } else {
+                                // Try to find it in window
+                                for (let key in window) {
+                                    if (window[key] && typeof window[key] === 'object' && window[key].levelStats) {
+                                        game = window[key];
+                                        break;
+                                    }
+                                }
+                            }
+                            
+                            if (game && game.levelStats) {
+                                const currentScore = Math.round(game.levelStats.score || 0);
+                                const currentLevel = game.level !== undefined ? game.level : -1;
+                                const currentMenuMode = game.menuMode !== undefined ? game.menuMode : true;
+                                
+                                // When level ends (menuMode changes from false to true), report final score
+                                if (lastMenuMode === false && currentMenuMode === true && lastLevel >= 0) {
+                                    // Level just ended - report the final score
+                                    window.parent.postMessage({
+                                        type: '${messageType}',
+                                        score: lastScore > 0 ? lastScore : currentScore,
+                                        level: lastLevel + 1,
+                                        gameOver: false
+                                    }, '*');
+                                }
+                                
+                                // Report score updates during gameplay
+                                if (currentScore !== lastScore && !currentMenuMode && game.levelPlaying) {
+                                    lastScore = currentScore;
+                                    window.parent.postMessage({
+                                        type: '${messageType}',
+                                        score: currentScore,
+                                        level: currentLevel + 1,
+                                        gameOver: false
+                                    }, '*');
+                                }
+                                
+                                // Track level changes
+                                if (currentLevel !== lastLevel) {
+                                    lastLevel = currentLevel;
+                                }
+                                
+                                lastMenuMode = currentMenuMode;
+                            }
+                        } catch (e) {
+                            console.warn('Score monitoring error:', e);
+                        }
+                    }, 500); // Check every 500ms for more responsive updates
+                    
+                    // Cleanup on unload
+                    window.addEventListener('beforeunload', function() {
+                        clearInterval(checkInterval);
+                    });
+                })();
+            `;
+        } else if (gameId === 'packabunchas') {
+            return `
+                (function() {
+                    let lastScore = 0;
+                    let checkInterval = setInterval(function() {
+                        try {
+                            // Packabunchas - need to find the score variable
+                            // Check common patterns
+                            let score = 0;
+                            
+                            // Try to access game object
+                            if (typeof game !== 'undefined' && game.score !== undefined) {
+                                score = game.score;
+                            } else if (typeof Game !== 'undefined' && Game.score !== undefined) {
+                                score = Game.score;
+                            } else {
+                                // Try to find score in global scope
+                                for (let key in window) {
+                                    if (window[key] && typeof window[key] === 'object' && window[key].score !== undefined) {
+                                        score = window[key].score;
+                                        break;
+                                    }
+                                }
+                            }
+                            
+                            if (score !== lastScore) {
+                                lastScore = score;
+                                window.parent.postMessage({
+                                    type: '${messageType}',
+                                    score: score,
+                                    gameOver: false
+                                }, '*');
+                            }
+                        } catch (e) {
+                            console.warn('Score monitoring error:', e);
+                        }
+                    }, 1000); // Check every second
+                    
+                    // Cleanup on unload
+                    window.addEventListener('beforeunload', function() {
+                        clearInterval(checkInterval);
+                    });
+                })();
+            `;
+        }
+        
+        return ''; // No script for unknown games
     }
 
     async startGame(type) {
@@ -492,7 +772,7 @@ export class StudentGames {
                 this.loadHTMLGame(
                     'radius-raid',
                     'js/games/radius-raid-master/index.html',
-                    null, // No score reporting for this game
+                    'radius-raid-score', // Score reporting enabled
                     gameOverCallback,
                     canvas,
                     gameStage
@@ -501,7 +781,7 @@ export class StudentGames {
                 this.loadHTMLGame(
                     'packabunchas',
                     'js/games/packabunchas-main/index.html',
-                    null, // No score reporting for this game
+                    'packabunchas-score', // Score reporting enabled
                     gameOverCallback,
                     canvas,
                     gameStage
@@ -510,7 +790,68 @@ export class StudentGames {
                 this.loadHTMLGame(
                     'spacepi',
                     'js/games/spacepi-master/index.html',
-                    null, // No score reporting for this game
+                    'spacepi-score', // Score reporting enabled
+                    gameOverCallback,
+                    canvas,
+                    gameStage
+                );
+            } else if (type === 'mystic-valley') {
+                this.loadHTMLGame(
+                    'mystic-valley',
+                    encodeURI('js/games/Mystic Valley.html'),
+                    null, // No score reporting initially
+                    gameOverCallback,
+                    canvas,
+                    gameStage
+                );
+            } else if (type === 'slash-knight') {
+                this.loadHTMLGame(
+                    'slash-knight',
+                    encodeURI('js/games/Slash Knight.html'),
+                    null, // No score reporting initially
+                    gameOverCallback,
+                    canvas,
+                    gameStage
+                );
+            } else if (type === 'black-hole-square') {
+                this.loadHTMLGame(
+                    'black-hole-square',
+                    'js/games/black-hole-square-master/public/index.html',
+                    null, // No score reporting initially
+                    gameOverCallback,
+                    canvas,
+                    gameStage
+                );
+            } else if (type === 'glitch-buster') {
+                // Glitch Buster - using standalone HTML file
+                const glitchPath = 'js/games/glitch-buster-master/glitch buster.html';
+                this.loadHTMLGame(
+                    'glitch-buster',
+                    glitchPath,
+                    null, // No score reporting initially
+                    gameOverCallback,
+                    canvas,
+                    gameStage
+                );
+            } else if (type === 'callisto') {
+                // Callisto needs to be built first
+                // Build command: cd js/games/js13k-callisto-main && npm install && npm run build
+                const callistoPath = 'js/games/js13k-callisto-main/dist/index.html';
+                this.loadHTMLGame(
+                    'callisto',
+                    callistoPath,
+                    null, // No score reporting initially
+                    gameOverCallback,
+                    canvas,
+                    gameStage
+                );
+            } else if (type === 'js13k2021') {
+                // Galaxy Rider (JS13K 2021) - using standalone HTML file
+                const js13kPath = 'js/games/galaxy_rider.html';
+                this.loadHTMLGame(
+                    'js13k2021',
+                    js13kPath,
+                    null, // No score reporting initially
                     gameOverCallback,
                     canvas,
                     gameStage

@@ -23,6 +23,31 @@ python3 -m http.server 8000
 
 *Note: Opening `index.html` directly may cause issues with loading vocabulary files due to browser security policies (CORS).*
 
+## Building Games
+
+Some games in the arcade require building before they can be played:
+- **JS13K 2021**
+- **Callisto**
+- **Glitch Buster**
+
+### Option 1: Double-Click (Recommended)
+1. Double-click `build-games.command` in the project folder.
+2. A Terminal window will open and build all games.
+3. The window will stay open so you can see the results.
+
+### Option 2: Command Line
+If you prefer the terminal:
+```bash
+./build-games.sh
+```
+
+**Note**: If you encounter npm permission errors, fix them with:
+```bash
+sudo chown -R $(whoami) ~/.npm
+```
+
+If games fail to build, they will show a helpful error message when you try to play them, with instructions on how to build them manually.
+
 ## Teacher Instructions
 
 ### Creating a New Vocabulary Set

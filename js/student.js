@@ -67,10 +67,16 @@ class StudentManager {
             { id: 'ball-blast', name: 'Ball Blast', icon: '💥', desc: 'Blast the balls!' },
             { id: 'radius-raid', name: 'Radius Raid', icon: '🚀', desc: 'Blast enemies in space!' },
             { id: 'packabunchas', name: 'Packabunchas', icon: '🧩', desc: 'Solve tiling puzzles!' },
-            { id: 'spacepi', name: 'SpacePi', icon: '🛡️', desc: 'Defend your base!' }
+            { id: 'spacepi', name: 'SpacePi', icon: '🛡️', desc: 'Defend your base!' },
+            { id: 'mystic-valley', name: 'Mystic Valley', icon: '🏔️', desc: 'Multiplayer platformer!' },
+            { id: 'slash-knight', name: 'Slash Knight', icon: '⚔️', desc: 'Adventure platformer!' },
+            { id: 'black-hole-square', name: 'Black Hole Square', icon: '⬛', desc: 'Clean up the squares!' },
+            { id: 'glitch-buster', name: 'Glitch Buster', icon: '💥', desc: 'Bust the glitches!' },
+            { id: 'callisto', name: 'Callisto', icon: '🌌', desc: '3D space action!' },
+            { id: 'js13k2021', name: 'JS13K 2021', icon: '🎮', desc: 'TypeScript adventure!' }
         ];
         // HTML/Scratch games that don't have leaderboards (Level Devil has leaderboard now)
-        this.htmlGames = ['ball-roll-3d', 'appel', 'ball-blast', 'radius-raid', 'packabunchas', 'spacepi'];
+        this.htmlGames = ['ball-roll-3d', 'appel', 'ball-blast', 'radius-raid', 'packabunchas', 'spacepi', 'mystic-valley', 'slash-knight', 'black-hole-square', 'glitch-buster', 'callisto', 'js13k2021'];
         this.currentGameIndex = 0;
         this.authInitialized = false;
         this.cloudVocabs = [];
