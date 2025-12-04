@@ -1,4 +1,4 @@
-import { createElement, $ } from '../main.js';
+import { createElement, $, notifications } from '../main.js';
 
 export class HangmanActivity {
     constructor(container, words, onProgress, onSaveState, initialState) {
@@ -147,7 +147,7 @@ export class HangmanActivity {
 
             if (!this.wordStatus.includes(null)) {
                 setTimeout(() => {
-                    alert('Correct! ' + this.currentWord.word);
+                    notifications.success(`Correct! The word was: ${this.currentWord.word}`);
                     this.currentWordIndex++;
                     this.checkProgress();
                     this.startRound();
@@ -161,7 +161,7 @@ export class HangmanActivity {
             this.mistakes++;
             if (this.mistakes >= this.maxMistakes) {
                 setTimeout(() => {
-                    alert('Game Over for this word! The word was: ' + this.currentWord.word);
+                    notifications.info(`Game Over! The word was: ${this.currentWord.word}`);
                     this.currentWordIndex++;
                     this.checkProgress();
                     this.startRound();

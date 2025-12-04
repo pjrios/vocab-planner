@@ -1,0 +1,24 @@
+<meta charset="utf-8">
+<canvas id=C0 width=k_fullWidth height=k_fullHeight></canvas>
+<canvas id=C1 width=k_fullWidth height=k_fullHeight></canvas>
+
+<style onload="g=C0.getContext`webgl`;c=C1.getContext`2d`;__CODE__"><!-- RELEASE -->
+<script>g=C0.getContext`webgl`; c=C1.getContext`2d`; __CODE__</script><style><!-- DEBUG -->
+
+html,body,canvas{
+    background:#222;
+    margin:0;
+    overflow:hidden
+}
+#C1{
+    display:none
+}
+canvas{
+    cursor:pointer;
+    border:10px solid #333;
+    position:absolute;
+    max-width:100%;
+    max-height:100%;
+    top:50%;
+    left:50%;
+    transform:translate(-50%,-50%)

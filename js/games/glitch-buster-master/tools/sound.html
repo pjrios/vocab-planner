@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+    <head>
+
+    </head>
+
+    <body>
+        <script src="../src/js/jsfxr2.js"></script>
+        <script src="../src/js/riffwave.js"></script>
+
+        <script>
+            var knobs = [0,,0.3964,,0.1599,0.5351,,0.1451,,,,,,0.4277,,,,,0.7854,,,,,0.5];
+
+            //var converted = convert(knobs);
+
+            //var sound = new SoundEffect(converted);
+            //var audio = sound.generate();
+            var audio = new Audio();
+            audio.src = jsfxr(knobs);
+        </script>
+    </body>
+</html>

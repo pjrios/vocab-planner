@@ -1,4 +1,4 @@
-import { $, $$, createElement, fetchJSON } from './main.js';
+import { $, $$, createElement, fetchJSON, notifications } from './main.js';
 import { QuizMaker } from './quizMaker.js';
 import {
     firebaseAuthService,
@@ -43,7 +43,6 @@ class TeacherManager {
 
         // Optimistic UI check
         if (localStorage.getItem('was_logged_in') === 'true') {
-            console.log('Optimistic login: showing teacher dashboard');
             this.updateAuthUI({ displayName: 'Resuming...', email: '...' }); // Placeholder UI
             this.showDashboard();
             this.loadLibrary();
@@ -318,7 +317,6 @@ class TeacherManager {
         }
 
         localStorage.setItem('teacher_vocab_library', JSON.stringify(vocabs));
-        console.log('Auto-saved to local storage:', vocab.id);
     }
 
     createLibraryCard(container, vocab, type) {
@@ -461,13 +459,12 @@ class TeacherManager {
                 updatedAt: serverTimestamp()
             };
             await setDoc(docRef, payload);
-            console.log('Saved vocabulary to Firebase:', this.vocabSet.id);
             this.setCloudStatus('✅ Saved to cloud', 'success');
             setTimeout(() => this.setCloudStatus('☁️ Ready', 'info'), 1500);
         } catch (error) {
             console.error('Failed to save vocabulary to Firebase:', error);
             this.setCloudStatus('⚠️ Save failed', 'error');
-            alert('Cloud save failed: ' + error.message + '\nCheck Firebase rules to ensure authenticated users can write to the vocabularies collection.');
+            notifications.error('Cloud save failed. Check Firebase rules to ensure authenticated users can write to the vocabularies collection.');
         }
     }
 
@@ -1741,7 +1738,7 @@ class TeacherManager {
     generateSummativeQuiz() {
         const vocab = this.vocabSet;
         if (!vocab || !Array.isArray(vocab.words) || vocab.words.length === 0) {
-            alert('Load a vocabulary with words before generating a quiz.');
+            notifications.warning('Load a vocabulary with words before generating a quiz.');
             return null;
         }
 
@@ -1752,7 +1749,7 @@ class TeacherManager {
         })).filter(w => w.term && w.definition);
 
         if (words.length < 4) {
-            alert('Need at least 4 words with definitions to build a quiz.');
+            notifications.warning('Need at least 4 words with definitions to build a quiz.');
             return null;
         }
 

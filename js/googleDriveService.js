@@ -1,4 +1,5 @@
 import { GOOGLE_CONFIG } from '../config/google-config.js';
+import { notifications } from './notifications.js';
 
 class GoogleDriveService {
     constructor() {
@@ -26,11 +27,10 @@ class GoogleDriveService {
             this.initTokenClient();
 
             this.isInitialized = true;
-            console.log('Google Drive service initialized');
             return true;
         } catch (error) {
             console.error('Error initializing Google Drive service:', error);
-            alert('Google Init Error: ' + error.message + '\nCheck console for details.');
+            notifications.error('Google Drive initialization failed. Please check your connection.');
             return false;
         }
     }
@@ -49,11 +49,9 @@ class GoogleDriveService {
     }
 
     initTokenClient() {
-        console.log('Initializing Token Client with ID:', GOOGLE_CONFIG.CLIENT_ID);
-
         if (!GOOGLE_CONFIG.CLIENT_ID || GOOGLE_CONFIG.CLIENT_ID.includes('YOUR_CLIENT_ID')) {
             console.error('CRITICAL: Invalid Client ID in config!');
-            alert('Configuration Error: Please set a valid Client ID in config/google-config.js');
+            notifications.error('Configuration Error: Please set a valid Client ID in config/google-config.js');
             return;
         }
 
@@ -62,10 +60,9 @@ class GoogleDriveService {
                 client_id: GOOGLE_CONFIG.CLIENT_ID,
                 scope: GOOGLE_CONFIG.SCOPES,
                 callback: (response) => {
-                    console.log('Token callback received:', response);
                     if (response.error) {
                         console.error('Token error:', response);
-                        alert('Google Auth Error: ' + JSON.stringify(response));
+                        notifications.error('Google authentication failed. Please try again.');
                         return;
                     }
                     this.accessToken = response.access_token;
@@ -78,45 +75,40 @@ class GoogleDriveService {
                     }));
                 },
             });
-            console.log('Token Client initialized successfully');
         } catch (e) {
             console.error('Failed to init Token Client:', e);
-            alert('Google Client Init Failed: ' + e.message);
+            notifications.error('Failed to initialize Google authentication.');
         }
     }
 
     async signIn() {
-        console.log('signIn() called');
-
         if (!this.isInitialized) {
-            console.log('Google Drive not initialized, trying to init...');
             const success = await this.init();
             if (!success) {
-                alert('Google Drive initialization failed. Please check console for errors.');
+                notifications.error('Google Drive initialization failed.');
                 return;
             }
         }
 
         if (!this.tokenClient) {
             console.error('Token client is null');
-            alert('Google Auth client not ready. Please refresh.');
+            notifications.warning('Google authentication not ready. Please refresh the page.');
             return;
         }
 
         // Request access token
         try {
-            console.log('Requesting access token...');
             this.tokenClient.requestAccessToken({ prompt: 'consent' });
         } catch (e) {
             console.error('Token request failed:', e);
-            alert('Failed to request token: ' + e.message);
+            notifications.error('Failed to authenticate with Google.');
         }
     }
 
     signOut() {
         if (this.accessToken) {
             google.accounts.oauth2.revoke(this.accessToken, () => {
-                console.log('Access token revoked');
+                // Token revoked
             });
         }
 
@@ -161,7 +153,6 @@ class GoogleDriveService {
                 }));
             }
 
-            console.log('Progress saved to Google Drive');
             return true;
         } catch (error) {
             console.error('Error saving to Drive:', error);

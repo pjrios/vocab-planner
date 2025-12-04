@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Mask creator</title>
+
+        <script>
+        function matrix(m){
+            return m;
+        }
+
+        function evaluate(x){
+            return x;
+        }
+
+
+        var UP = 1,
+            DOWN = 2,
+            LEFT = 4,
+            RIGHT = 8;
+
+        var PROBABLE_TILE_PROBABILITY = 0.5;
+
+        var WORLD_PADDING = 5;
+        var MASK_ROWS = 10;
+        var MASK_COLS = 10;
+
+        var VOID_ID = 0;
+        var TILE_ID = 1;
+        var UNBREAKABLE_TILE_ID = 2;
+        var PROBABLE_TILE_ID = 3;
+        var SPAWN_ID = 4;
+        var EXIT_ID = 5;
+        var CEILING_SPIKE_ID = 6;
+        var FLOOR_SPIKE_ID = 7;
+
+        var SPIKE_DENSITY = 0.05;
+        </script>
+        <script src="../src/js/util/expose-math.js"></script>
+        <script src="../src/js/util/globals.js"></script>
+        <script src="../src/js/util/pad.js"></script>
+        <script src="../src/js/util/flatten.js"></script>
+        <script src="../src/js/util/rand.js"></script>
+        <script src="../src/js/util/pick.js"></script>
+        <script src="../src/js/world/masks.js"></script>
+        <script src="../src/js/world/mirror-mask.js"></script>
+        <script src="../src/js/world/generate-world.js"></script>
+        <script src="tile-render-map.js"></script>
+        <script src="mask-creator.js"></script>
+    </head>
+
+    <body>
+        <div>
+            <canvas></canvas>
+        </div>
+
+        <select></select>
+
+        <label>
+            <input type="checkbox" id="left" /> Left
+        </label>
+
+        <label>
+            <input type="checkbox" id="right" /> Right
+        </label>
+
+        <label>
+            <input type="checkbox" id="up" /> Up
+        </label>
+
+        <label>
+            <input type="checkbox" id="down" /> Down
+        </label>
+
+        <button id="add">Add</button>
+        <button id="delete">Delete</button>
+        <button id="simulate">Simulate</button>
+
+        <div>
+            <textarea cols="40" rows="12"></textarea>
+        </div>
+
+        <canvas id="simulation-canvas"></canvas>
+    </body>
+</html>

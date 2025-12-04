@@ -1,5 +1,5 @@
 
-import { createElement, $ } from '../main.js';
+import { createElement, $, notifications } from '../main.js';
 
 export class FillInBlankActivity {
     constructor(container, words, onProgress, onSaveState, initialState) {
@@ -113,7 +113,7 @@ export class FillInBlankActivity {
             // Correct
             input.classList.add('correct');
             setTimeout(() => {
-                alert('Correct!');
+                notifications.success('Correct!');
                 this.currentIndex++;
                 this.checkProgress();
                 this.startRound();
@@ -133,7 +133,7 @@ export class FillInBlankActivity {
             if (this.attempts >= 3) {
                 // Show hint or move on?
                 // Let's show the answer
-                alert(`The correct word was: ${this.currentWord.word}`);
+                notifications.info(`The correct word was: ${this.currentWord.word}`);
                 this.currentIndex++;
                 this.checkProgress();
                 this.startRound();

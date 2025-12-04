@@ -1,15 +1,4 @@
-import { $, $$, createElement, fetchJSON } from './main.js';
-import { MatchingActivity } from './activities/matching.js';
-import { FlashcardsActivity } from './activities/flashcards.js';
-import { QuizActivity } from './activities/quiz.js';
-import { IllustrationActivity } from './activities/illustration.js';
-import { SynonymAntonymActivity } from './activities/synonymAntonym.js';
-import { WordSearchActivity } from './activities/wordSearch.js';
-import { CrosswordActivity } from './activities/crossword.js';
-import { HangmanActivity } from './activities/hangman.js';
-import { ScrambleActivity } from './activities/scramble.js';
-import { SpeedMatchActivity } from './activities/speedMatch.js';
-import { FillInBlankActivity } from './activities/fillInBlank.js';
+import { $, $$, createElement, fetchJSON, notifications } from './main.js';
 import { ReportGenerator } from './reportGenerator.js';
 import {
     firebaseAuthService,
@@ -26,6 +15,11 @@ import {
     limit
 } from './firebaseService.js';
 import { imageDB } from './db.js';
+// Import modular components
+import { StudentAuth } from './student/studentAuth.js';
+import { StudentProgress } from './student/studentProgress.js';
+import { StudentActivities } from './student/studentActivities.js';
+import { StudentGames } from './student/studentGames.js';
 
 class StudentManager {
     constructor() {
@@ -70,27 +64,32 @@ class StudentManager {
             { id: 'level-devil', name: 'Level Devil', icon: '👺', desc: 'Expect the unexpected!' },
             { id: 'ball-roll-3d', name: '3D Ball Roll', icon: '⚽', desc: 'Roll the ball in 3D!' },
             { id: 'appel', name: 'Appel', icon: '🍎', desc: 'Catch the apples!' },
-            { id: 'ball-blast', name: 'Ball Blast', icon: '💥', desc: 'Blast the balls!' }
+            { id: 'ball-blast', name: 'Ball Blast', icon: '💥', desc: 'Blast the balls!' },
+            { id: 'radius-raid', name: 'Radius Raid', icon: '🚀', desc: 'Blast enemies in space!' },
+            { id: 'packabunchas', name: 'Packabunchas', icon: '🧩', desc: 'Solve tiling puzzles!' },
+            { id: 'spacepi', name: 'SpacePi', icon: '🛡️', desc: 'Defend your base!' }
         ];
-        // HTML/Scratch games that don't have leaderboards
-        this.htmlGames = ['level-devil', 'ball-roll-3d', 'appel', 'ball-blast'];
+        // HTML/Scratch games that don't have leaderboards (Level Devil has leaderboard now)
+        this.htmlGames = ['ball-roll-3d', 'appel', 'ball-blast', 'radius-raid', 'packabunchas', 'spacepi'];
         this.currentGameIndex = 0;
         this.authInitialized = false;
         this.cloudVocabs = [];
         this.cloudSaveTimeout = null;
         this.unitImages = {};
 
+        // Initialize modular components
+        this.auth = new StudentAuth(this);
+        this.progress = new StudentProgress(this);
+        this.activities = new StudentActivities(this);
+        this.games = new StudentGames(this);
+
         this.init();
     }
 
     async init() {
-        console.log('StudentManager init started');
-
         // Attach listeners first so buttons work immediately
         this.initListeners();
-        console.log('Listeners attached');
 
-        // Default view/state
         // Default view/state
         this.switchView('loading-view');
 
@@ -99,352 +98,98 @@ class StudentManager {
         const hasLocalProfile = this.studentProfile && (this.studentProfile.firstName || this.studentProfile.name);
 
         if (wasLoggedIn && hasLocalProfile) {
-            console.log('Optimistic login: showing dashboard immediately');
-            this.setAuthStatus('Resuming session...');
-            this.updateHeader();
-            this.renderDashboard();
+            this.auth.setAuthStatus('Resuming session...');
+            this.auth.updateHeader();
+            this.activities.renderDashboard();
             this.switchView('main-menu-view');
             // We still let initFirebaseAuth run to verify token and sync
         } else if (wasLoggedIn) {
-            this.setAuthStatus('Resuming session...');
+            this.auth.setAuthStatus('Resuming session...');
         } else {
-            this.setAuthStatus('Guest Mode');
-            this.updateGuestStatus(true);
+            this.auth.setAuthStatus('Guest Mode');
+            this.auth.updateGuestStatus(true);
             this.switchView('main-menu-view');
         }
 
         // Load manifest and local data
-        await this.loadManifest();
-        await this.loadCloudVocabularies();
-        this.loadLocalProgress();
-        this.updateHeader();
+        await this.activities.loadManifest();
+        
+        // Try to load cloud vocabularies (may fail offline)
+        try {
+            await this.activities.loadCloudVocabularies();
+        } catch (error) {
+            console.error('Failed to load cloud vocabularies (may be offline):', error);
+            // Continue with local/manifest vocabularies
+        }
+        
+        this.progress.loadLocalProgress();
+        this.auth.updateHeader();
 
-        await this.initFirebaseAuth();
+        await this.auth.initFirebaseAuth();
     }
 
-    // Migrate old coin structure to new structure
+    // DEPRECATED: Use this.progress.migrateCoinData() instead
     migrateCoinData(data) {
-        // If already new format, return as-is
-        if (data.coinData) {
-            return {
-                coinData: data.coinData,
-                coinHistory: data.coinHistory || []
-            };
-        }
-
-        // Migrate from old format
-        const oldCoins = data.coins || 0;
-        return {
-            coinData: {
-                balance: oldCoins,
-                giftCoins: 0,
-                totalEarned: oldCoins, // Estimate - assume all were earned
-                totalSpent: 0,
-                totalGifted: 0
-            },
-            coinHistory: []
-        };
+        return this.progress.migrateCoinData(data);
     }
 
+    // DEPRECATED: Use this.progress.loadLocalProgress() instead
     loadLocalProgress() {
-        try {
-            const saved = localStorage.getItem('student_progress');
-            if (saved) {
-                const parsed = JSON.parse(saved);
-                if (parsed && typeof parsed === 'object') {
-                    this.progressData = parsed;
-                    if (this.progressData.studentProfile && this.progressData.studentProfile.name) {
-                        this.studentProfile = this.progressData.studentProfile;
-                    }
-                    
-                    // Migrate coin data
-                    const migrated = this.migrateCoinData(parsed);
-                    this.coinData = migrated.coinData;
-                    this.coinHistory = migrated.coinHistory;
-                    
-                    // Legacy support
-                    this.coins = this.coinData.balance;
-                    this.updateCoinDisplay();
-                }
-            }
-        } catch (e) {
-            console.error('Error loading progress:', e);
-            // Reset if corrupt
-            this.progressData = { studentProfile: {}, units: {} };
-            this.coinData = {
-                balance: 0,
-                giftCoins: 0,
-                totalEarned: 0,
-                totalSpent: 0,
-                totalGifted: 0
-            };
-            this.coinHistory = [];
-        }
+        return this.progress.loadLocalProgress();
     }
 
+    // DEPRECATED: Use this.progress.saveLocalProgress() instead
     saveLocalProgress(skipCloud = false) {
-        try {
-            this.progressData.studentProfile = this.studentProfile;
-            // Save both old and new format for compatibility
-            this.coins = this.coinData.balance; // Legacy support
-            this.progressData.coins = this.coins;
-            this.progressData.coinData = this.coinData;
-            this.progressData.coinHistory = this.coinHistory;
-            localStorage.setItem('student_progress', JSON.stringify(this.progressData));
-            if (!skipCloud) {
-                this.scheduleCloudSync();
-            }
-        } catch (e) {
-            console.error('Error saving progress:', e);
-        }
+        return this.progress.saveLocalProgress(skipCloud);
     }
 
+    // DEPRECATED: Use this.auth.updateHeader() instead
     updateHeader() {
-        const headerTitle = $('.header-left h1');
-        const fullName = this.studentProfile.firstName && this.studentProfile.lastName
-            ? `${this.studentProfile.firstName} ${this.studentProfile.lastName}`
-            : this.studentProfile.name || 'Student';
-        headerTitle.textContent = `Welcome, ${fullName}`;
-
-        const editButton = $('#edit-profile-btn');
-        if (editButton) {
-            editButton.style.display = 'inline-flex';
-        }
+        return this.auth.updateHeader();
     }
 
+    // DEPRECATED: Use this.auth.checkProfile() instead
     checkProfile(force = false) {
-        const isComplete = Boolean(
-            this.studentProfile.firstName &&
-            this.studentProfile.lastName &&
-            this.studentProfile.grade &&
-            this.studentProfile.group
-        );
-
-        if (isComplete && !force) {
-            return;
-        }
-
-        const modal = $('#profile-modal');
-
-        if (this.studentProfile.firstName) {
-            $('#student-firstname').value = this.studentProfile.firstName;
-            $('#student-lastname').value = this.studentProfile.lastName || '';
-            $('#student-grade').value = this.studentProfile.grade;
-            $('#student-group').value = this.studentProfile.group;
-        } else if (this.studentProfile.name) {
-            const nameParts = this.studentProfile.name.split(' ');
-            $('#student-firstname').value = nameParts[0] || '';
-            $('#student-lastname').value = nameParts.slice(1).join(' ') || '';
-            $('#student-grade').value = this.studentProfile.grade;
-            $('#student-group').value = this.studentProfile.group;
-        } else {
-            $('#student-firstname').value = '';
-            $('#student-lastname').value = '';
-            $('#student-grade').value = '';
-            $('#student-group').value = '';
-        }
-
-        modal.classList.remove('hidden');
+        return this.auth.checkProfile(force);
     }
 
+    // DEPRECATED: Use this.activities.loadManifest() instead
     async loadManifest() {
-        const data = await fetchJSON('vocabularies/manifest.json');
-        if (data) {
-            this.manifest = data;
-        } else {
-            // Fallback or error handling
-            console.error('Could not load manifest');
-            $('#vocab-list').innerHTML = '<p class="error">Failed to load vocabulary list.</p>';
-        }
+        return this.activities.loadManifest();
     }
 
+    // DEPRECATED: Use this.activities.renderDashboard() instead
     renderDashboard() {
-        const container = $('#vocab-list');
-        container.innerHTML = '';
-
-        let vocabs = [];
-
-        if (Array.isArray(this.cloudVocabs) && this.cloudVocabs.length > 0) {
-            vocabs = vocabs.concat(this.cloudVocabs);
-        }
-
-        if (this.manifest && Array.isArray(this.manifest.vocabularies)) {
-            const manifestVocabs = this.manifest.vocabularies.map(v => ({
-                ...v,
-                __source: 'manifest'
-            }));
-            vocabs = vocabs.concat(manifestVocabs);
-        }
-
-        try {
-            const localStored = localStorage.getItem('teacher_vocab_library');
-            if (localStored) {
-                const localVocabs = JSON.parse(localStored);
-                if (Array.isArray(localVocabs)) {
-                    const normalized = localVocabs.map(v => ({
-                        ...v,
-                        __source: 'local'
-                    }));
-                    vocabs = vocabs.concat(normalized);
-                }
-            }
-        } catch (e) {
-            console.error("Error loading local vocabularies", e);
-        }
-
-        if (vocabs.length === 0) {
-            container.innerHTML = '<p>No vocabularies found.</p>';
-            return;
-        }
-
-        // Filter by grade if set
-        const studentGrade = this.studentProfile.grade ? String(this.studentProfile.grade).trim() : '';
-
-        if (studentGrade) {
-            vocabs = vocabs.filter(v => {
-                // Check 'grades' array first
-                if (v.grades && Array.isArray(v.grades)) {
-                    return v.grades.some(g => String(g).trim() === studentGrade);
-                }
-                // Fallback to 'grade' field
-                if (v.grade) {
-                    return String(v.grade).trim() === studentGrade;
-                }
-                // If no grade specified on vocab, show it by default
-                return true;
-            });
-        }
-
-        if (vocabs.length === 0) {
-            container.innerHTML = `<p>No vocabularies found for Grade ${studentGrade}. <br><small>Try clearing your grade in profile to see all.</small></p>`;
-            return;
-        }
-
-
-
-        vocabs.forEach(vocab => {
-            const card = createElement('div', 'card option-card');
-            const sourceLabel = vocab.__source === 'cloud'
-                ? '☁️ Cloud'
-                : vocab.__source === 'local'
-                    ? '💾 Local'
-                    : '📁 Repo';
-
-            card.innerHTML = `
-                <div class="icon">${vocab.__source === 'cloud' ? '☁️' : '📚'}</div>
-                <h3>${vocab.name}</h3>
-                <p>${vocab.description || ''}</p>
-                ${vocab.grades ? `<small>Grade: ${vocab.grades.join(', ')}</small>` : ''}
-                <small style="color:var(--text-muted); display:block; margin-top:0.5rem;">${sourceLabel}</small>
-            `;
-            card.addEventListener('click', () => this.loadVocabulary(vocab));
-            container.appendChild(card);
-        });
+        return this.activities.renderDashboard();
     }
 
+    // DEPRECATED: Use this.activities.loadVocabulary() instead
     async loadVocabulary(vocabMeta) {
-        // ... (existing load logic) ...
-        let vocabData = null;
-
-        if (vocabMeta.path) {
-            vocabData = await fetchJSON(vocabMeta.path);
-        } else {
-            vocabData = vocabMeta;
-        }
-
-        if (!vocabData) {
-            console.error('Failed to load vocabulary data for:', vocabMeta);
-            alert('Failed to load vocabulary data. Please try again or contact your teacher.');
-            return;
-        }
-
-        this.currentVocab = vocabData;
-
-        // Restore scores from persistence
-        if (!this.progressData.units) this.progressData.units = {};
-
-        // Initialize unit entry if not exists, but preserve existing scores
-        if (!this.progressData.units[this.currentVocab.name]) {
-            this.progressData.units[this.currentVocab.name] = {
-                scores: {},
-                images: {},
-                states: {}
-            };
-        }
-
-        // Load scores into current session (reference to the stored object)
-        this.unitScores = this.progressData.units[this.currentVocab.name].scores;
-        this.unitImages = this.progressData.units[this.currentVocab.name].images || {};
-        this.unitStates = this.progressData.units[this.currentVocab.name].states || {};
-
-        this.showActivityMenu();
+        return this.activities.loadVocabulary(vocabMeta);
     }
 
+    // DEPRECATED: Use this.activities.showActivityMenu() instead
     showActivityMenu() {
-        $('#current-unit-title').textContent = this.currentVocab.name;
-
-        // Update progress on cards
-        const cards = $$('.activity-card');
-        cards.forEach(card => {
-            const type = card.dataset.activity;
-            const scoreData = this.unitScores[type];
-            let progress = 0;
-            let isComplete = false;
-
-            if (scoreData) {
-                progress = scoreData.score || 0;
-                isComplete = scoreData.isComplete || (progress >= 100);
-            }
-
-            // Remove existing badge if any
-            const existingBadge = card.querySelector('.progress-badge');
-            if (existingBadge) existingBadge.remove();
-
-            if (scoreData) {
-                const badge = createElement('div', 'progress-badge');
-                badge.textContent = `${progress}%`;
-                if (isComplete) badge.classList.add('complete');
-                card.appendChild(badge);
-            }
-        });
-
-        this.switchView('activity-menu-view');
+        return this.activities.showActivityMenu();
     }
 
+    // DEPRECATED: Use this.auth.initFirebaseAuth() instead
     async initFirebaseAuth() {
-        try {
-            await firebaseAuthService.init();
-            firebaseAuthService.onAuthStateChanged(async (user) => {
-                if (user) {
-                    await this.handleFirebaseSignIn(user);
-                } else {
-                    this.handleFirebaseSignOut();
-                }
-            });
-        } catch (error) {
-            console.error('Firebase auth init failed:', error);
-            this.showLoginError('Authentication service unavailable. Continue as guest.');
-            this.setManualSaveVisibility(true);
-        }
+        return this.auth.initFirebaseAuth();
     }
 
+    // DEPRECATED: Use this.activities.loadCloudVocabularies() instead
     async loadCloudVocabularies() {
-        try {
-            await firebaseAuthService.init();
-            const db = firebaseAuthService.getFirestore();
-            const snapshot = await getDocs(collection(db, 'vocabularies'));
-            this.cloudVocabs = snapshot.docs.map(docSnap => ({
-                id: docSnap.id,
-                ...docSnap.data(),
-                __source: 'cloud'
-            }));
-        } catch (error) {
-            console.error('Failed to load cloud vocabularies:', error);
-            this.cloudVocabs = [];
-        }
+        return this.activities.loadCloudVocabularies();
     }
 
+    // DEPRECATED: Use this.progress.loadCloudProgress() instead
     async loadCloudProgress() {
+        return this.progress.loadCloudProgress();
+    }
+
+    // OLD METHOD - Keeping for reference during migration
+    async _loadCloudProgress_OLD() {
         if (!this.currentUser) return;
         try {
             const db = firebaseAuthService.getFirestore();
@@ -455,7 +200,7 @@ class StudentManager {
                 const data = snapshot.data();
 
                 // Migrate coin data from cloud
-                const cloudCoinData = this.migrateCoinData(data);
+                const cloudCoinData = this.progress.migrateCoinData(data);
                 const cloudGiftCoins = cloudCoinData.coinData.giftCoins || 0;
                 const localGiftCoins = this.coinData.giftCoins || 0;
 
@@ -495,34 +240,35 @@ class StudentManager {
                     coinHistory: data.coinHistory || this.coinHistory || []
                 };
                 this.coinHistory = this.progressData.coinHistory;
-                this.updateCoinDisplay();
+                this.progress.updateCoinDisplay();
                 this.studentProfile = this.progressData.studentProfile || this.studentProfile;
-                await this.restoreImagesFromProgress();
-                this.saveLocalProgress(true);
+                await this.progress.restoreImagesFromProgress();
+                this.progress.saveLocalProgress(true);
 
                 // Sync if local balance is higher
                 if (this.coinData.balance > cloudCoinData.coinData.balance) {
-                    await this.saveProgressToCloud();
+                    await this.progress.saveProgressToCloud();
                 } else {
-                    this.setAuthStatus('☁️ Synced');
+                    this.auth.setAuthStatus('☁️ Synced');
                 }
             } else {
                 // New user or no cloud data - Welcome Bonus
                 if (this.coinData.balance === 0) {
                     this.coinData.balance = 100;
                     this.coinData.totalEarned = 100;
-                    this.addCoinHistory('earn', 100, 'welcome', 'Welcome bonus!');
+                    this.progress.addCoinHistory('earn', 100, 'welcome', 'Welcome bonus!');
                     this.coins = 100; // Legacy
-                    this.updateCoinDisplay();
+                    this.progress.updateCoinDisplay();
                     this.showToast('🎉 Welcome! You received 100 starting coins!');
-                    this.saveLocalProgress();
-                    await this.saveProgressToCloud();
+                    this.progress.saveLocalProgress();
+                    await this.progress.saveProgressToCloud();
                 }
-                this.setAuthStatus('☁️ Ready');
+                this.auth.setAuthStatus('☁️ Ready');
             }
         } catch (error) {
             console.error('Failed to load cloud progress:', error);
-            this.setAuthStatus('⚠️ Cloud load failed');
+            this.auth.setAuthStatus('⚠️ Cloud load failed');
+            notifications.warning('Could not load progress from cloud. Using local data.');
         }
     }
 
@@ -562,214 +308,44 @@ class StudentManager {
 
     scheduleCloudSync() {
         if (!this.currentUser) return;
-        this.setAuthStatus('☁️ Saving...');
+        this.auth.setAuthStatus('☁️ Saving...');
         clearTimeout(this.cloudSaveTimeout);
-        this.cloudSaveTimeout = setTimeout(() => this.saveProgressToCloud(), 1000);
+        this.cloudSaveTimeout = setTimeout(() => this.progress.saveProgressToCloud(), 1000);
     }
 
-    // Add entry to coin history
+    // DEPRECATED: Use this.progress.addCoinHistory() instead
     addCoinHistory(type, amount, source, description = '') {
-        const entry = {
-            type: type, // 'gift', 'earn', 'spend', 'accept'
-            amount: amount,
-            timestamp: new Date().toISOString(),
-            source: source, // 'teacher', 'activity', 'game', 'welcome'
-            description: description
-        };
-        this.coinHistory.push(entry);
-        // Keep only last 100 entries to prevent bloat
-        if (this.coinHistory.length > 100) {
-            this.coinHistory = this.coinHistory.slice(-100);
-        }
+        return this.progress.addCoinHistory(type, amount, source, description);
     }
 
+    // DEPRECATED: Use this.progress.saveProgressToCloud() instead
     async saveProgressToCloud() {
-        if (!this.currentUser) return;
-        try {
-            const db = firebaseAuthService.getFirestore();
-            const docRef = doc(db, 'studentProgress', this.currentUser.uid);
-
-            // Get current cloud data first to prevent overwriting newer data
-            const snapshot = await getDoc(docRef);
-            let cloudCoinData = null;
-            if (snapshot.exists()) {
-                const data = snapshot.data();
-                cloudCoinData = this.migrateCoinData(data);
-            }
-
-            // Merge coin data - preserve cloud giftCoins (teacher updates), but use local if we just accepted
-            // If local giftCoins is 0 and cloud has giftCoins, keep cloud (teacher just added)
-            // If local giftCoins is 0 and cloud is 0, use 0 (already accepted)
-            // If local giftCoins > 0, use local (shouldn't happen, but handle it)
-            let mergedGiftCoins = cloudCoinData?.coinData.giftCoins || this.coinData.giftCoins;
-            // If we just accepted (local is 0 but was > 0 before), use 0
-            if (this.coinData.giftCoins === 0 && cloudCoinData?.coinData.giftCoins > 0) {
-                // Check if we recently accepted by looking at history
-                const recentAccept = this.coinHistory.slice(-5).some(h => h.type === 'accept');
-                if (recentAccept) {
-                    mergedGiftCoins = 0; // We just accepted, save 0 to cloud
-                }
-            }
-            
-            // Determine which balance to use
-            // If we have recent transactions (spend/earn), use local balance (more recent)
-            // Otherwise, use the higher balance (to prevent losing coins)
-            const recentTransactions = this.coinHistory.slice(-10).some(h => 
-                h.type === 'spend' || h.type === 'earn' || h.type === 'accept'
-            );
-            let mergedBalance;
-            if (recentTransactions) {
-                // Recent activity - use local balance (it's more up-to-date)
-                mergedBalance = this.coinData.balance;
-            } else {
-                // No recent activity - use max to prevent losing coins
-                mergedBalance = Math.max(this.coinData.balance, cloudCoinData?.coinData.balance || 0);
-            }
-            
-            const mergedCoinData = {
-                balance: mergedBalance,
-                giftCoins: mergedGiftCoins,
-                totalEarned: Math.max(this.coinData.totalEarned, cloudCoinData?.coinData.totalEarned || 0),
-                totalSpent: Math.max(this.coinData.totalSpent, cloudCoinData?.coinData.totalSpent || 0),
-                totalGifted: Math.max(this.coinData.totalGifted, cloudCoinData?.coinData.totalGifted || 0)
-            };
-
-            // Only update local if cloud had more balance AND we don't have recent transactions
-            if (cloudCoinData && cloudCoinData.coinData.balance > this.coinData.balance && !recentTransactions) {
-                this.coinData.balance = cloudCoinData.coinData.balance;
-            }
-
-            // Merge coin history (keep both, deduplicate by timestamp)
-            const mergedHistory = [...(cloudCoinData?.coinHistory || []), ...this.coinHistory]
-                .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
-                .slice(-100); // Keep last 100
-
-            const payload = {
-                studentProfile: this.studentProfile,
-                units: this.progressData.units || {},
-                coins: mergedCoinData.balance, // Legacy support
-                coinData: mergedCoinData,
-                coinHistory: mergedHistory,
-                email: this.currentUser?.email || this.studentProfile.email || '',
-                role: this.currentRole || 'student',
-                updatedAt: serverTimestamp()
-            };
-            await setDoc(docRef, payload, { merge: true });
-
-            // Update local
-            this.coinData = mergedCoinData;
-            this.coinHistory = mergedHistory;
-            this.coins = this.coinData.balance; // Legacy
-            this.updateCoinDisplay();
-
-            this.setAuthStatus('☁️ Synced');
-        } catch (error) {
-            console.error('Failed to save progress to cloud:', error);
-            this.setAuthStatus('⚠️ Cloud save failed');
-        }
+        return this.progress.saveProgressToCloud();
     }
 
+    // DEPRECATED: Use this.progress.restoreImagesFromProgress() instead
     async restoreImagesFromProgress() {
-        if (!this.progressData.units) return;
-        for (const [unitName, unitData] of Object.entries(this.progressData.units)) {
-            if (!unitData.images) continue;
-            for (const [word, dataUrl] of Object.entries(unitData.images)) {
-                try {
-                    const blob = await this.dataURLToBlob(dataUrl);
-                    await imageDB.saveDrawing(unitName, word, blob);
-                } catch (error) {
-                    console.error('Failed to restore image', unitName, word, error);
-                }
-            }
-        }
+        return this.progress.restoreImagesFromProgress();
     }
 
+    // DEPRECATED: Use this.progress.dataURLToBlob() instead
     dataURLToBlob(dataUrl) {
-        return fetch(dataUrl).then(res => res.blob());
+        return this.progress.dataURLToBlob(dataUrl);
     }
 
+    // DEPRECATED: Use this.auth.fetchAndSetRole() instead
     async fetchAndSetRole(user) {
-        this.currentRole = 'student';
-        if (!user) return this.currentRole;
-        try {
-            const db = firebaseAuthService.getFirestore();
-            const roleRef = doc(db, 'userRoles', user.uid);
-            const snap = await getDoc(roleRef);
-            if (snap.exists()) {
-                const data = snap.data();
-                this.currentRole = data.role || 'student';
-            } else {
-                // Try to create as teacher (rules allow only allowlisted), fallback to student
-                let created = false;
-                try {
-                    await setDoc(roleRef, { role: 'teacher', email: user.email || '' }, { merge: true });
-                    this.currentRole = 'teacher';
-                    created = true;
-                } catch (err) {
-                    // ignore
-                }
-                if (!created) {
-                    try {
-                        await setDoc(roleRef, { role: 'student', email: user.email || '' }, { merge: true });
-                        this.currentRole = 'student';
-                    } catch (err) {
-                        console.error('Failed to create role doc', err);
-                    }
-                }
-            }
-        } catch (err) {
-            console.error('Failed to load role', err);
-            this.currentRole = 'student';
-        }
-        return this.currentRole;
+        return this.auth.fetchAndSetRole(user);
     }
 
+    // DEPRECATED: Use this.auth.handleFirebaseSignIn() instead
     async handleFirebaseSignIn(user) {
-        this.currentUser = user;
-        localStorage.setItem('was_logged_in', 'true');
-        await this.fetchAndSetRole(user);
-        this.setAuthStatus('🔐 Signed in');
-        this.updateGuestStatus(false);
-
-        const name = user.displayName || user.email || 'Signed in';
-        const avatar = $('#google-user-avatar');
-        if (avatar) {
-            avatar.src = user.photoURL || '';
-        }
-        const nameEl = $('#google-user-name');
-        if (nameEl) {
-            nameEl.textContent = name;
-        }
-
-        await this.loadCloudProgress();
-
-        this.updateHeader();
-        this.renderDashboard();
-        this.updateHeader();
-        this.renderDashboard();
-        this.switchView('main-menu-view');
-        const requiresProfile = !(
-            this.studentProfile.firstName &&
-            this.studentProfile.lastName &&
-            this.studentProfile.grade &&
-            this.studentProfile.group
-        );
-
-        if (requiresProfile) {
-            this.checkProfile(true);
-        }
+        return this.auth.handleFirebaseSignIn(user);
     }
 
+    // DEPRECATED: Use this.auth.handleFirebaseSignOut() instead
     handleFirebaseSignOut() {
-        this.currentUser = null;
-        localStorage.removeItem('was_logged_in');
-        if (this.cloudSaveTimeout) {
-            clearTimeout(this.cloudSaveTimeout);
-            this.cloudSaveTimeout = null;
-        }
-        this.updateGuestStatus(true);
-        this.setAuthStatus('Guest mode (local only)');
-        this.switchView('main-menu-view');
+        return this.auth.handleFirebaseSignOut();
     }
 
     switchView(viewId) {
@@ -799,10 +375,10 @@ class StudentManager {
         // Arcade Navigation
         this.addListener('#menu-arcade-btn', 'click', () => {
             this.switchView('arcade-view');
-            this.updateArcadeUI();
-            this.updateGameSelectionUI();
+            this.games.updateArcadeUI();
+            this.games.updateGameSelectionUI();
             // Load initial leaderboard (or hide if HTML game)
-            this.updateLeaderboardGame();
+            this.games.updateLeaderboardGame();
         });
 
         this.addListener('#back-to-main-menu-btn', 'click', () => {
@@ -819,14 +395,14 @@ class StudentManager {
         // Game Selection Navigation
         this.addListener('#prev-game-select-btn', 'click', () => {
             this.currentGameIndex = (this.currentGameIndex - 1 + this.games.length) % this.games.length;
-            this.updateGameSelectionUI();
-            this.updateLeaderboardGame();
+            this.games.updateGameSelectionUI();
+            this.games.updateLeaderboardGame();
         });
 
         this.addListener('#next-game-select-btn', 'click', () => {
             this.currentGameIndex = (this.currentGameIndex + 1) % this.games.length;
-            this.updateGameSelectionUI();
-            this.updateLeaderboardGame();
+            this.games.updateGameSelectionUI();
+            this.games.updateLeaderboardGame();
         });
 
         // Note: #play-current-game-btn listener is attached dynamically in updateGameSelectionUI()
@@ -837,15 +413,15 @@ class StudentManager {
             const exchangeRate = settings.exchangeRate !== undefined ? settings.exchangeRate : 10;
             const extensionSeconds = 60;
 
-            if (await this.deductCoins(exchangeRate)) {
-                this.addGameTime(extensionSeconds);
+            if (await this.progress.deductCoins(exchangeRate)) {
+                this.games.addGameTime(extensionSeconds);
             } else {
-                alert(`You need ${exchangeRate} coins to add time.`);
+                notifications.warning(`You need ${exchangeRate} coins to add time.`);
             }
         });
 
         this.addListener('#exit-game-btn', 'click', () => {
-            this.stopCurrentGame();
+            this.games.stopCurrentGame();
             $('#game-stage').classList.add('hidden');
             $('#game-selection').classList.remove('hidden');
         });
@@ -863,7 +439,7 @@ class StudentManager {
                 const originalText = loginBtn.innerHTML;
                 loginBtn.innerHTML = '⏳ Signing in...';
                 loginBtn.disabled = true;
-                this.showLoginError('');
+                this.auth.showLoginError('');
 
                 try {
                     await firebaseAuthService.signInWithGoogle();
@@ -886,7 +462,7 @@ class StudentManager {
         this.addListener('#skip-login-link', 'click', (e) => {
             e.preventDefault();
             this.switchView('vocab-selection-view');
-            this.checkProfile(); // Proceed to profile check -> dashboard
+            this.auth.checkProfile(); // Proceed to profile check -> dashboard
         });
 
         // Guest Sign In Button
@@ -906,7 +482,7 @@ class StudentManager {
         $$('.activity-card').forEach(card => {
             card.addEventListener('click', () => {
                 const activityType = card.dataset.activity;
-                this.startActivity(activityType);
+                this.activities.startActivity(activityType);
             });
         });
 
@@ -939,20 +515,20 @@ class StudentManager {
             const isLoginViewVisible = $('#login-view') && !$('#login-view').classList.contains('hidden');
 
             if (!firstName) {
-                alert('Please enter your first name.');
+                notifications.warning('Please enter your first name.');
                 return;
             }
 
             // Validate grade: only numbers
             if (grade && !/^\d+$/.test(grade)) {
-                alert('Grade must contain only numbers (e.g., 6, 7, 8).');
+                notifications.warning('Grade must contain only numbers (e.g., 6, 7, 8).');
                 return;
             }
 
             // Validate and normalize group: single letter, convert to uppercase
             if (group) {
                 if (!/^[a-zA-Z]$/.test(group)) {
-                    alert('Group must be a single letter (e.g., A, B, C).');
+                    notifications.warning('Group must be a single letter (e.g., A, B, C).');
                     return;
                 }
                 group = group.toUpperCase();
@@ -965,13 +541,13 @@ class StudentManager {
                 grade,
                 group
             };
-            this.saveLocalProgress(); // Save to local storage
+            this.progress.saveLocalProgress(); // Save to local storage
 
             $('#profile-modal').classList.add('hidden');
-            this.updateHeader();
-            this.renderDashboard();
+            this.auth.updateHeader();
+            this.activities.renderDashboard();
             if (isLoginViewVisible) {
-                this.renderDashboard();
+                this.activities.renderDashboard();
                 if (isLoginViewVisible) {
                     this.switchView('main-menu-view');
                 }
@@ -979,74 +555,19 @@ class StudentManager {
         });
     }
 
+    // DEPRECATED: Use this.activities.handleAutoSave() instead
     handleAutoSave(scoreData) {
-        if (this.currentVocab && this.currentActivityType) {
-            // Calculate coin rewards
-            const oldScoreData = this.unitScores[this.currentActivityType];
-            const oldScore = oldScoreData ? (oldScoreData.score || 0) : 0;
-            const newScore = scoreData.score || 0;
-
-            if (newScore > oldScore) {
-                const settings = this.currentVocab.activitySettings || {};
-                const progressReward = settings.progressReward !== undefined ? settings.progressReward : 1;
-                const completionBonus = settings.completionBonus !== undefined ? settings.completionBonus : 50;
-
-                // Coins per 10% progress
-                const stepsOld = Math.floor(oldScore / 10);
-                const stepsNew = Math.floor(newScore / 10);
-                const stepsGained = stepsNew - stepsOld;
-
-                let totalReward = Math.max(0, stepsGained * progressReward);
-
-                // Completion bonus
-                if (newScore === 100 && oldScore < 100) {
-                    totalReward += completionBonus;
-                }
-
-                if (totalReward > 0) {
-                    this.addCoins(totalReward);
-                }
-            }
-
-            this.unitScores[this.currentActivityType] = scoreData;
-            this.saveLocalProgress();
-
-            // Update in-game progress indicator
-            const indicator = $('#activity-progress-indicator');
-            if (indicator) {
-                const percent = scoreData.score || 0;
-                indicator.textContent = `Progress: ${percent}%`;
-                indicator.classList.remove('hidden');
-            }
-        }
+        return this.activities.handleAutoSave(scoreData);
     }
 
+    // DEPRECATED: Use this.activities.handleIllustrationSave() instead
     handleIllustrationSave(vocabName, word, dataUrl) {
-        const unitName = vocabName || (this.currentVocab ? this.currentVocab.name : null);
-        if (!unitName) return;
-        if (!this.progressData.units) this.progressData.units = {};
-        if (!this.progressData.units[unitName]) {
-            this.progressData.units[unitName] = { scores: {}, images: {} };
-        }
-        if (!this.progressData.units[unitName].images) {
-            this.progressData.units[unitName].images = {};
-        }
-        this.progressData.units[unitName].images[word] = dataUrl;
-        if (this.currentVocab && this.currentVocab.name === unitName) {
-            this.unitImages = this.progressData.units[unitName].images;
-        }
-        this.saveLocalProgress();
+        return this.activities.handleIllustrationSave(vocabName, word, dataUrl);
     }
 
+    // DEPRECATED: Use this.activities.handleStateSave() instead
     handleStateSave(stateData) {
-        if (this.currentVocab && this.currentActivityType) {
-            if (!this.progressData.units[this.currentVocab.name].states) {
-                this.progressData.units[this.currentVocab.name].states = {};
-            }
-            this.progressData.units[this.currentVocab.name].states[this.currentActivityType] = stateData;
-            this.unitStates = this.progressData.units[this.currentVocab.name].states;
-            this.saveLocalProgress();
-        }
+        return this.activities.handleStateSave(stateData);
     }
 
     updateGuestStatus(isGuest) {
@@ -1092,202 +613,38 @@ class StudentManager {
         }
     }
 
+    // DEPRECATED: Use this.activities.startActivity() instead
     startActivity(type) {
-        // $('#activity-title').textContent = type.charAt(0).toUpperCase() + type.slice(1);
-        this.currentActivityType = type; // Track current activity type
-        this.switchView('activity-view');
-
-        const container = $('#activity-container');
-        container.innerHTML = ''; // Clear previous
-
-
-
-        const onProgress = this.handleAutoSave.bind(this);
-        const onSaveState = this.handleStateSave.bind(this);
-        const initialState = this.unitStates ? this.unitStates[type] : null;
-        const settings = this.currentVocab.activitySettings || {};
-
-        switch (type) {
-            case 'matching':
-                const matchingLimit = settings.matching || 10;
-                const matchingWords = this.currentVocab.words.filter(w => w.word.length >= 2).slice(0, matchingLimit);
-                this.currentActivityInstance = new MatchingActivity(container, matchingWords, onProgress);
-                break;
-            case 'flashcards':
-                const flashcardsLimit = settings.flashcards || this.currentVocab.words.length;
-                const flashcardsWords = this.currentVocab.words.slice(0, flashcardsLimit);
-                this.currentActivityInstance = new FlashcardsActivity(container, flashcardsWords, onProgress, onSaveState, initialState);
-                break;
-            case 'quiz':
-                const quizLimit = settings.quiz || 10;
-                const quizWords = this.currentVocab.words.slice(0, quizLimit);
-                this.currentActivityInstance = new QuizActivity(container, quizWords, onProgress);
-                break;
-            case 'synonym-antonym':
-                const synonymLimit = settings.synonymAntonym || 10;
-                const synonymWords = this.currentVocab.words.slice(0, synonymLimit);
-                this.currentActivityInstance = new SynonymAntonymActivity(container, synonymWords, onProgress);
-                break;
-            case 'illustration':
-                const illustrationLimit = settings.illustration || 10;
-                const illustrationWords = this.currentVocab.words.slice(0, illustrationLimit);
-                this.currentActivityInstance = new IllustrationActivity(
-                    container,
-                    illustrationWords,
-                    this.currentVocab.name,
-                    onProgress,
-                    this.handleIllustrationSave.bind(this)
-                );
-                break;
-            case 'word-search':
-                const wordSearchLimit = settings.wordSearch || 10;
-                const wordSearchWords = this.currentVocab.words.filter(w => w.word.length >= 4).slice(0, wordSearchLimit);
-                // Pass vocab ID (or name as fallback) for stable persistence
-                const vocabID = this.currentVocab.id || this.currentVocab.name;
-                this.currentActivityInstance = new WordSearchActivity(container, wordSearchWords, onProgress, vocabID);
-                break;
-            case 'crossword':
-                this.currentActivityInstance = new CrosswordActivity(container, this.currentVocab.words, onProgress, onSaveState, initialState);
-                break;
-            case 'hangman':
-                this.currentActivityInstance = new HangmanActivity(container, this.currentVocab.words, onProgress, onSaveState, initialState);
-                break;
-            case 'scramble':
-                this.currentActivityInstance = new ScrambleActivity(container, this.currentVocab.words, onProgress, onSaveState, initialState);
-                break;
-            case 'speed-match':
-                this.currentActivityInstance = new SpeedMatchActivity(container, this.currentVocab.words, onProgress, onSaveState, initialState);
-                break;
-            case 'fill-in-blank':
-                this.currentActivityInstance = new FillInBlankActivity(container, this.currentVocab.words, onProgress, onSaveState, initialState);
-                break;
-            default:
-                container.innerHTML = `<p>Activity ${type} not implemented yet.</p>`;
-                this.currentActivityInstance = null;
-        }
+        return this.activities.startActivity(type);
     }
 
 
     // Initialize immediately if DOM is already ready, otherwise wait
 
 
+    // DEPRECATED: Use this.progress.addCoins() instead
     addCoins(amount, source = 'activity', description = '') {
-        this.coinData.balance += amount;
-        this.coinData.totalEarned += amount;
-        this.coins = this.coinData.balance; // Legacy support
-        this.addCoinHistory('earn', amount, source, description);
-        this.updateCoinDisplay();
-        this.saveLocalProgress();
-
-        // Visual feedback (could be improved with animation)
-        const coinEl = $('#coin-balance');
-        if (coinEl) {
-            coinEl.classList.add('pulse');
-            setTimeout(() => coinEl.classList.remove('pulse'), 500);
-        }
+        return this.progress.addCoins(amount, source, description);
     }
 
+    // DEPRECATED: Use this.progress.deductCoins() instead
     async deductCoins(amount) {
-        if (this.coinData.balance >= amount) {
-            this.coinData.balance -= amount;
-            this.coinData.totalSpent += amount;
-            this.coins = this.coinData.balance; // Legacy support
-            this.addCoinHistory('spend', amount, 'game', 'Spent on game');
-            this.updateCoinDisplay();
-            this.saveLocalProgress();
-            
-            // Immediately save to cloud to prevent sync issues
-            try {
-                await this.saveProgressToCloud();
-            } catch (error) {
-                console.error('Error saving coin deduction to cloud:', error);
-                // Don't fail the deduction if cloud save fails
-            }
-            
-            return true;
-        }
-        return false;
+        return this.progress.deductCoins(amount);
     }
 
+    // DEPRECATED: Use this.progress.acceptGiftCoins() instead
     async acceptGiftCoins() {
-        if (this.coinData.giftCoins <= 0) {
-            this.hideNotificationBadge();
-            return;
-        }
-
-        const amount = this.coinData.giftCoins;
-        
-        // Immediately hide badge to prevent multiple clicks
-        this.hideNotificationBadge();
-        
-        // Update coin data
-        this.coinData.balance += amount;
-        this.coinData.totalGifted += amount;
-        this.addCoinHistory('accept', amount, 'teacher', 'Accepted gift from teacher');
-        
-        // Reset giftCoins BEFORE saving
-        this.coinData.giftCoins = 0;
-        this.coins = this.coinData.balance; // Legacy support
-        
-        // Update display immediately
-        this.updateCoinDisplay();
-        this.showToast(`🎉 You received ${amount} coins!`);
-        
-        // Save to cloud immediately with giftCoins = 0
-        try {
-            const db = firebaseAuthService.getFirestore();
-            const docRef = doc(db, 'studentProgress', this.currentUser.uid);
-            
-            // Get current data
-            const snapshot = await getDoc(docRef);
-            let existingCoinData = this.coinData;
-            if (snapshot.exists()) {
-                const data = snapshot.data();
-                if (data.coinData) {
-                    existingCoinData = data.coinData;
-                }
-            }
-            
-            // Save with giftCoins explicitly set to 0
-            await setDoc(docRef, {
-                coinData: {
-                    balance: this.coinData.balance,
-                    giftCoins: 0, // Explicitly set to 0
-                    totalEarned: this.coinData.totalEarned,
-                    totalSpent: this.coinData.totalSpent,
-                    totalGifted: this.coinData.totalGifted
-                },
-                coinHistory: this.coinHistory.slice(-100),
-                coins: this.coinData.balance, // Legacy support
-                updatedAt: serverTimestamp()
-            }, { merge: true });
-            
-            this.saveLocalProgress();
-        } catch (error) {
-            console.error('Error saving after accepting coins:', error);
-            // If save fails, restore the gift coins so user can try again
-            this.coinData.giftCoins = amount;
-            this.coinData.balance -= amount;
-            this.coinData.totalGifted -= amount;
-            this.coins = this.coinData.balance;
-            this.updateCoinDisplay();
-            this.showToast('Error saving. Please try again.', 5000);
-        }
+        return this.progress.acceptGiftCoins();
     }
 
+    // DEPRECATED: Use this.games.formatTime() instead
+    formatTime(seconds) {
+        return this.games.formatTime(seconds);
+    }
+
+    // DEPRECATED: Use this.progress.updateCoinDisplay() instead
     updateCoinDisplay() {
-        const coinEl = $('#coin-balance');
-        if (coinEl) {
-            coinEl.textContent = `🪙 ${this.coinData.balance} `;
-            coinEl.style.display = this.currentUser ? 'flex' : 'none';
-        }
-        
-        // Update notification badge
-        if (this.coinData.giftCoins > 0) {
-            this.showNotificationBadge();
-        } else {
-            this.hideNotificationBadge();
-        }
+        return this.progress.updateCoinDisplay();
     }
 
     showNotificationBadge() {
@@ -1411,7 +768,7 @@ class StudentManager {
         // Event listeners
         $('#close-notification-panel').addEventListener('click', () => panel.remove());
         $('#accept-gift-coins').addEventListener('click', async () => {
-            await this.acceptGiftCoins();
+                    await this.progress.acceptGiftCoins();
             panel.remove();
         });
 
@@ -1426,502 +783,59 @@ class StudentManager {
         }, 100);
     }
 
+    // DEPRECATED: Use this.games.updateArcadeUI() instead
     updateArcadeUI() {
-        // Use default settings if no vocab selected (or maybe fetch global settings later)
-        // For now, fallback to defaults if accessed from Main Menu without a vocab context
-        const settings = (this.currentVocab && this.currentVocab.activitySettings) ? this.currentVocab.activitySettings : {};
-        const exchangeRate = settings.exchangeRate !== undefined ? settings.exchangeRate : 10;
-
-        const costEl = $('#galactic-breaker-cost');
-        if (costEl) costEl.textContent = `${exchangeRate} Coins / min`;
-
-        const addTimeBtn = $('#add-time-btn');
-        if (addTimeBtn) addTimeBtn.textContent = `+1 Min (${exchangeRate} Coins)`;
+        return this.games.updateArcadeUI();
     }
 
+    // DEPRECATED: Use this.games.updateGameSelectionUI() instead
     updateGameSelectionUI() {
-        const game = this.games[this.currentGameIndex];
-        const container = $('#current-game-card');
-        if (!container) return;
-
-        const settings = (this.currentVocab && this.currentVocab.activitySettings) ? this.currentVocab.activitySettings : {};
-        const exchangeRate = settings.exchangeRate !== undefined ? settings.exchangeRate : 10;
-
-        container.innerHTML = `
-            <div class="game-icon" style="font-size: 4rem; text-align: center; margin: 1rem 0;">${game.icon}</div>
-            <h3 style="text-align: center;">${game.name}</h3>
-            <p style="text-align: center; color: var(--text-muted);">${game.desc}</p>
-            <div class="game-cost" style="text-align: center; margin: 1rem 0; font-weight: bold;">${exchangeRate} Coins / min</div>
-            <button id="play-current-game-btn" class="btn primary-btn" style="width: 100%;">Play</button>
-        `;
-
-        // Re-attach the play button listener
-        this.addListener('#play-current-game-btn', 'click', () => {
-            this.startGame(game.id);
-        });
+        return this.games.updateGameSelectionUI();
     }
 
-    async saveHighScore(gameId, score) {
-        // Skip leaderboard for HTML/Scratch games
-        if (this.htmlGames.includes(gameId)) {
-            console.log('Skipping leaderboard save for HTML game:', gameId);
-            return;
-        }
-        if (!this.currentUser) {
-            console.log('Cannot save score: not logged in');
-            return; // Only save if logged in
-        }
-        if (!this.studentProfile.grade) {
-            console.log('Cannot save score: no grade set');
-            return; // Need grade for leaderboard
-        }
-
-        try {
-            const db = firebaseAuthService.getFirestore();
-            const scoresRef = collection(db, 'scores');
-
-            // Use a deterministic document ID: userId-gameId
-            // This ensures each player has only one entry per game
-            const scoreDocId = `${this.currentUser.uid}-${gameId}`;
-            const scoreDocRef = doc(scoresRef, scoreDocId);
-
-            // Check if we already have a score
-            const existingDoc = await getDoc(scoreDocRef);
-
-            // Only update if this is a new high score or first time playing
-            const existingScore = existingDoc.exists() ? (existingDoc.data().score || 0) : 0;
-            if (!existingDoc.exists() || score > existingScore) {
-                await setDoc(scoreDocRef, {
-                    userId: this.currentUser.uid,
-                    name: this.studentProfile.name || 'Anonymous',
-                    grade: this.studentProfile.grade,
-                    gameId: gameId,
-                    score: score,
-                    timestamp: serverTimestamp()
-                });
-
-                console.log('Score saved!', score, 'Previous:', existingScore);
-                // Refresh leaderboard if we're viewing this game
-                if (this.games && this.games[this.currentGameIndex] && this.games[this.currentGameIndex].id === gameId) {
-                    this.loadLeaderboard(gameId);
-                }
-            } else {
-                console.log('Score not high enough to update. Current:', score, 'Existing:', existingScore);
-            }
-        } catch (error) {
-            console.error('Error saving score:', error);
-        }
+    // DEPRECATED: Use this.games.saveHighScore() instead
+    async saveHighScore(gameId, score, metadata = null) {
+        return this.games.saveHighScore(gameId, score, metadata);
     }
 
+    // DEPRECATED: Use this.games.updateLeaderboardGame() instead
     updateLeaderboardGame() {
-        const game = this.games[this.currentGameIndex];
-        const nameEl = $('#current-game-name');
-        if (nameEl) nameEl.textContent = game.name;
-        
-        // Hide leaderboard for HTML/Scratch games
-        const leaderboardContainer = $('#leaderboard-container');
-        if (this.htmlGames.includes(game.id)) {
-            if (leaderboardContainer) leaderboardContainer.style.display = 'none';
-        } else {
-            if (leaderboardContainer) leaderboardContainer.style.display = 'block';
-            this.loadLeaderboard(game.id);
-        }
+        return this.games.updateLeaderboardGame();
     }
 
+    // DEPRECATED: Use this.games.loadLeaderboard() instead
     async loadLeaderboard(gameId) {
-        const container = $('#leaderboard-list');
-        if (!container) return;
-
-        // Only show if we have a grade to filter by
-        if (!this.studentProfile.grade) {
-            container.innerHTML = '<p style="text-align: center; color: var(--text-muted);">Update your profile grade to see the leaderboard!</p>';
-            return;
-        }
-
-        container.innerHTML = '<div class="loading-spinner">Loading scores...</div>';
-
-
-        try {
-            const db = firebaseAuthService.getFirestore();
-            const scoresRef = collection(db, 'scores');
-
-            // Query: Same grade, same game, order by score desc, limit 5
-            // Note: This requires a composite index in Firestore. 
-            // If it fails, check console for index creation link.
-            const q = query(
-                scoresRef,
-                where('grade', '==', this.studentProfile.grade),
-                where('gameId', '==', gameId),
-                orderBy('score', 'desc'),
-                limit(5)
-            );
-
-            const querySnapshot = await getDocs(q);
-
-            container.innerHTML = '';
-
-            if (querySnapshot.empty) {
-                container.innerHTML = '<p style="text-align: center; color: var(--text-muted);">No scores yet. Be the first!</p>';
-                return;
-            }
-
-            let rank = 1;
-            querySnapshot.forEach((doc) => {
-                const data = doc.data();
-                const isMe = this.currentUser && data.userId === this.currentUser.uid;
-
-                const row = document.createElement('div');
-                row.className = `leaderboard-row ${isMe ? 'highlight' : ''}`;
-                row.style.display = 'flex';
-                row.style.justifyContent = 'space-between';
-                row.style.padding = '0.5rem 1rem';
-                row.style.background = isMe ? 'rgba(139, 92, 246, 0.1)' : 'var(--surface-color)';
-                row.style.borderRadius = '8px';
-                row.style.border = '1px solid var(--border-color)';
-
-                row.innerHTML = `
-                    <span style="font-weight: bold; width: 30px;">#${rank}</span>
-                    <span style="flex-grow: 1;">${data.name}</span>
-                    <span style="font-weight: bold; color: var(--primary-color);">${data.score}</span>
-                `;
-
-                container.appendChild(row);
-                rank++;
-            });
-
-        } catch (error) {
-            console.error('Error loading leaderboard:', error);
-            container.innerHTML = '<p style="text-align: center; color: var(--danger-color);">Could not load leaderboard. (Index might be building)</p>';
-        }
+        return this.games.loadLeaderboard(gameId);
     }
 
-    /**
-     * Helper function to load HTML games via iframe
-     * @param {string} gameId - The game ID
-     * @param {string} htmlFile - Path to the HTML file
-     * @param {string} scoreMessageType - Optional message type for score reporting (e.g., 'level-devil-score')
-     * @param {Function} gameOverCallback - Callback when game ends
-     * @param {HTMLElement} canvas - Canvas element to hide
-     * @param {HTMLElement} gameStage - Game stage container
-     */
+    // DEPRECATED: Use this.games.loadHTMLGame() instead
     loadHTMLGame(gameId, htmlFile, scoreMessageType, gameOverCallback, canvas, gameStage) {
-        // Hide canvas and create iframe for the HTML game
-        canvas.style.display = 'none';
-        
-        // Remove existing iframe if any
-        const existingIframe = gameStage.querySelector(`#${gameId}-iframe`);
-        if (existingIframe) {
-            existingIframe.remove();
-        }
-        
-        // Create iframe for the HTML game
-        const iframe = document.createElement('iframe');
-        iframe.id = `${gameId}-iframe`;
-        iframe.src = htmlFile;
-        iframe.style.width = '100%';
-        iframe.style.height = '600px';
-        iframe.style.border = 'none';
-        iframe.style.borderRadius = '8px';
-        iframe.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1)';
-        iframe.style.maxWidth = '100%';
-        iframe.style.display = 'block';
-        
-        // Insert iframe after the canvas
-        canvas.parentNode.insertBefore(iframe, canvas.nextSibling);
-        
-        // Set up message listener for score reporting (if scoreMessageType is provided)
-        let messageHandler = null;
-        if (scoreMessageType) {
-            messageHandler = (event) => {
-                // Verify message is from our iframe (security check)
-                if (event.data && event.data.type === scoreMessageType) {
-                    const score = event.data.score || 0;
-                    const isGameOver = event.data.gameOver || false;
-                    
-                    console.log(`${gameId} score received:`, score, 'gameOver:', isGameOver);
-                    
-                    // Update score display dynamically
-                    const scoreDisplay = $('#game-score');
-                    if (scoreDisplay) {
-                        scoreDisplay.style.display = 'block';
-                        scoreDisplay.textContent = `Score: ${score.toLocaleString()}`;
-                    }
-                    
-                    // Store current score for final reporting
-                    this.currentGameScore = Math.max(this.currentGameScore || 0, score);
-                    
-                    // Save score periodically (not just on game over) to ensure it's saved
-                    if (score > 0 && score !== (this.lastSavedScore || 0)) {
-                        this.lastSavedScore = score;
-                        this.saveHighScore(gameId, score).catch(err => {
-                            console.error('Error saving score:', err);
-                        });
-                    }
-                    
-                    if (isGameOver) {
-                        // Game completed - call the callback with final score
-                        gameOverCallback(score);
-                        // Remove listener after game over
-                        window.removeEventListener('message', messageHandler);
-                    }
-                }
-            };
-            
-            window.addEventListener('message', messageHandler);
-        }
-        
-        // Initialize score tracking
-        this.currentGameScore = 0;
-        this.lastSavedScore = 0;
-        
-        // Store reference for cleanup
-        this.currentGame = {
-            gameType: gameId,
-            iframe: iframe,
-            messageHandler: messageHandler,
-            stop: () => {
-                // Remove message listener
-                if (messageHandler) {
-                    window.removeEventListener('message', messageHandler);
-                }
-                if (iframe && iframe.parentNode) {
-                    iframe.remove();
-                }
-                canvas.style.display = 'block';
-                // Hide score display
-                const scoreDisplay = $('#game-score');
-                if (scoreDisplay) {
-                    scoreDisplay.style.display = 'none';
-                }
-            }
-        };
+        return this.games.loadHTMLGame(gameId, htmlFile, scoreMessageType, gameOverCallback, canvas, gameStage);
     }
 
+    // DEPRECATED: Use this.games.startGame() instead
     async startGame(type) {
-        // Use default settings if no vocab selected (accessed from Main Menu)
-        const settings = (this.currentVocab && this.currentVocab.activitySettings) ? this.currentVocab.activitySettings : {};
-        const exchangeRate = settings.exchangeRate !== undefined ? settings.exchangeRate : 10;
-
-        if (this.coins < exchangeRate) {
-            alert(`You need at least ${exchangeRate} coins to play!`);
-            return;
-        }
-
-        if (await this.deductCoins(exchangeRate)) {
-            $('#game-selection').classList.add('hidden');
-            $('#game-stage').classList.remove('hidden');
-
-            this.gameTimeRemaining = 60;
-            this.updateGameTimer();
-
-            // Start Timer
-            this.gameTimerInterval = setInterval(() => {
-                this.gameTimeRemaining--;
-                this.updateGameTimer();
-                if (this.gameTimeRemaining <= 0) {
-                    this.pauseGame();
-                }
-            }, 1000);
-
-            // Initialize Game Logic
-            const canvas = $('#game-canvas');
-            const gameStage = $('#game-stage');
-
-            // Create a callback that offers replay if time remains
-            const gameOverCallback = (score) => {
-                this.saveHighScore(type, score);
-
-                // If there's time remaining, offer to play again
-                if (this.gameTimeRemaining > 0) {
-                    const playAgain = confirm(`Game Over! Score: ${score}\n\nYou have ${Math.floor(this.gameTimeRemaining / 60)}:${(this.gameTimeRemaining % 60).toString().padStart(2, '0')} remaining.\n\nPlay again?`);
-
-                    if (playAgain) {
-                        // Restart the same game
-                        this.currentGame = null;
-                        this.startGame(type);
-                    } else {
-                        // Exit game
-                        this.stopCurrentGame();
-                    }
-                } else {
-                    // No time left, just exit
-                    this.stopCurrentGame();
-                }
-            };
-
-            if (type === 'galactic-breaker') {
-                import('./games/galacticBreaker.js').then(module => {
-                    this.currentGame = new module.GalacticBreaker(canvas, gameOverCallback);
-                    this.currentGame.start();
-                });
-            } else if (type === 'snake') {
-                import('./games/snake.js').then(module => {
-                    this.currentGame = new module.Snake(canvas, gameOverCallback);
-                    this.currentGame.start();
-                });
-            } else if (type === 'flappy-bird') {
-                import('./games/flappyBird.js').then(module => {
-                    this.currentGame = new module.FlappyBird(canvas, gameOverCallback);
-                    this.currentGame.start();
-                });
-            } else if (type === 'space-invaders') {
-                import('./games/spaceInvaders.js').then(module => {
-                    this.currentGame = new module.SpaceInvaders(canvas, gameOverCallback);
-                    this.currentGame.start();
-                });
-            } else if (type === 'target-shooter') {
-                import('./games/targetShooter.js').then(module => {
-                    this.currentGame = new module.TargetShooter(canvas, gameOverCallback);
-                    this.currentGame.start();
-                });
-            } else if (type === 'pong') {
-                import('./games/pong.js').then(module => {
-                    this.currentGame = new module.Pong(canvas, gameOverCallback);
-                    this.currentGame.start();
-                });
-            } else if (type === 'whack-a-mole') {
-                import('./games/whackAMole.js').then(module => {
-                    this.currentGame = new module.WhackAMole(canvas, gameOverCallback);
-                    this.currentGame.start();
-                });
-            } else if (type === 'level-devil') {
-                this.loadHTMLGame(
-                    'level-devil',
-                    'js/games/Level Devil - NOT A Troll Game.html',
-                    'level-devil-score',
-                    gameOverCallback,
-                    canvas,
-                    gameStage
-                );
-            } else if (type === 'ball-roll-3d') {
-                this.loadHTMLGame(
-                    'ball-roll-3d',
-                    encodeURI('js/games/[3D]ボールころころ2.html'),
-                    null, // No score reporting for this game
-                    gameOverCallback,
-                    canvas,
-                    gameStage
-                );
-            } else if (type === 'appel') {
-                this.loadHTMLGame(
-                    'appel',
-                    encodeURI('js/games/Appel v1.html'),
-                    null, // No score reporting for this game
-                    gameOverCallback,
-                    canvas,
-                    gameStage
-                );
-            } else if (type === 'ball-blast') {
-                this.loadHTMLGame(
-                    'ball-blast',
-                    encodeURI('js/games/Ball Blast - Mobile friendly.html'),
-                    null, // No score reporting for this game
-                    gameOverCallback,
-                    canvas,
-                    gameStage
-                );
-            }
-        }
+        return this.games.startGame(type);
     }
 
+    // DEPRECATED: Use this.games.stopCurrentGame() instead
     stopCurrentGame() {
-        // Store current game type before cleanup for score saving
-        const currentGameType = this.currentGame?.gameType || null;
-        
-        if (this.currentGame) {
-            if (typeof this.currentGame.stop === 'function') {
-                this.currentGame.stop();
-            }
-            // Also clean up message handler if it exists
-            if (this.currentGame.messageHandler) {
-                window.removeEventListener('message', this.currentGame.messageHandler);
-            }
-            // Report final score if available (for games with score reporting)
-            if (this.currentGameScore !== undefined && this.currentGameScore > 0 && currentGameType) {
-                this.saveHighScore(currentGameType, this.currentGameScore);
-            }
-            this.currentGame = null;
-            this.currentGameScore = 0;
-        }
-        
-        // Clean up any remaining iframes (fallback cleanup)
-        const iframes = document.querySelectorAll('[id$="-iframe"]');
-        iframes.forEach(iframe => {
-            if (iframe.parentNode) {
-                iframe.remove();
-            }
-        });
-        
-        // Show canvas again
-        const canvas = $('#game-canvas');
-        if (canvas) {
-            canvas.style.display = 'block';
-        }
-        
-        // Hide score display
-        const scoreDisplay = $('#game-score');
-        if (scoreDisplay) {
-            scoreDisplay.style.display = 'none';
-        }
-        
-        if (this.gameTimerInterval) {
-            clearInterval(this.gameTimerInterval);
-            this.gameTimerInterval = null;
-        }
+        return this.games.stopCurrentGame();
     }
 
+    // DEPRECATED: Use this.games.pauseGame() instead
     async pauseGame() {
-        if (!this.currentGame) return;
-
-        // Check if we can auto-extend BEFORE pausing
-        const settings = (this.currentVocab && this.currentVocab.activitySettings) ? this.currentVocab.activitySettings : {};
-        const exchangeRate = settings.exchangeRate !== undefined ? settings.exchangeRate : 10;
-
-        if (this.coins >= exchangeRate) {
-            // Auto-deduct and add time - NO PAUSE, game continues seamlessly
-            await this.deductCoins(exchangeRate);
-            this.addGameTime(60);
-
-            // Visual feedback for extension (non-blocking)
-            const timerEl = $('#game-timer');
-            const originalColor = timerEl.style.color;
-            timerEl.style.color = '#4ade80'; // Green
-            timerEl.textContent = 'Time Extended! -' + exchangeRate + ' Coins';
-            setTimeout(() => {
-                timerEl.style.color = originalColor;
-                this.updateGameTimer();
-            }, 1500);
-
-            return; // Continue game without any interruption
-        }
-
-        // Only pause if not enough coins
-        this.currentGame.pause();
-        this.isGamePaused = true;
-
-        // Stop the timer
-        if (this.gameTimerInterval) {
-            clearInterval(this.gameTimerInterval);
-            this.gameTimerInterval = null;
-        }
-
-        // Not enough coins - end game
-        alert('Time up! Not enough coins to continue.');
-        this.stopCurrentGame();
-        $('#game-stage').classList.add('hidden');
-        $('#game-selection').classList.remove('hidden');
+        return this.games.pauseGame();
     }
 
+    // DEPRECATED: Use this.games.addGameTime() instead
     addGameTime(seconds = 60) {
-        const increment = Number.isFinite(seconds) ? seconds : 0;
-        this.gameTimeRemaining = Math.max(0, this.gameTimeRemaining + increment);
-        this.updateGameTimer();
+        return this.games.addGameTime(seconds);
     }
 
+    // DEPRECATED: Use this.games.updateGameTimer() instead
     updateGameTimer() {
-        const mins = Math.floor(this.gameTimeRemaining / 60);
-        const secs = this.gameTimeRemaining % 60;
-        $('#game-timer').textContent = `Time: ${mins}:${secs.toString().padStart(2, '0')}`;
+        return this.games.updateGameTimer();
     }
 }
 
