@@ -428,8 +428,23 @@ class StudentManager {
 
         this.addListener('#exit-game-btn', 'click', () => {
             this.games.stopCurrentGame();
-            $('#game-stage').classList.add('hidden');
-            $('#game-selection').classList.remove('hidden');
+            this.games.showGameSelection();
+        });
+
+        // Leaderboard Modal
+        this.addListener('#show-leaderboard-btn', 'click', () => {
+            this.games.showLeaderboardModal();
+        });
+
+        this.addListener('#close-leaderboard-modal', 'click', () => {
+            this.games.hideLeaderboardModal();
+        });
+
+        // Close modal when clicking outside
+        this.addListener('#leaderboard-modal', 'click', (e) => {
+            if (e.target.id === 'leaderboard-modal') {
+                this.games.hideLeaderboardModal();
+            }
         });
 
         this.addListener('#back-to-menu-btn', 'click', () => {

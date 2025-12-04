@@ -192,48 +192,53 @@
                     <h2>🕹️ The Arcade</h2>
                 </div>
 
-                <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 2rem; align-items: start;">
-                    <!-- Game Area -->
-                    <div class="arcade-container">
-                        <div id="game-selection">
-                            <div
-                                style="display: flex; align-items: center; justify-content: center; gap: 2rem; margin-bottom: 2rem;">
-                                <button id="prev-game-select-btn" class="btn secondary-btn"
-                                    style="padding: 1rem 1.5rem; font-size: 1.5rem;">◀</button>
-                                <div id="current-game-card" class="card game-card" style="max-width: 400px; flex: 1;">
-                                    <!-- Game card will be dynamically inserted here -->
-                                </div>
-                                <button id="next-game-select-btn" class="btn secondary-btn"
-                                    style="padding: 1rem 1.5rem; font-size: 1.5rem;">▶</button>
+                <!-- Game Area -->
+                <div class="arcade-container">
+                    <div id="game-selection">
+                        <div
+                            style="display: flex; align-items: center; justify-content: center; gap: 2rem; margin-bottom: 2rem;">
+                            <button id="prev-game-select-btn" class="btn secondary-btn"
+                                style="padding: 1rem 1.5rem; font-size: 1.5rem;">◀</button>
+                            <div id="current-game-card" class="card game-card" style="max-width: 400px; flex: 1;">
+                                <!-- Game card will be dynamically inserted here -->
                             </div>
+                            <button id="next-game-select-btn" class="btn secondary-btn"
+                                style="padding: 1rem 1.5rem; font-size: 1.5rem;">▶</button>
                         </div>
-                        <div id="game-stage" class="hidden">
-                            <div class="game-header">
-                                <div id="game-timer">Time: 0:00</div>
-                                <div id="game-score" style="display: none; font-weight: bold; color: var(--primary-color);">Score: 0</div>
-                                <button id="add-time-btn" class="btn accent-btn">+1 Min (10 Coins)</button>
-                                <button id="exit-game-btn" class="btn secondary-btn">Exit</button>
-                            </div>
-                            <canvas id="game-canvas" width="800" height="600"
-                                style="max-width: 100%; height: auto; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);"></canvas>
+                        <div style="text-align: center; margin-top: 1rem;">
+                            <button id="show-leaderboard-btn" class="btn secondary-btn">🏆 View Leaderboard</button>
                         </div>
                     </div>
-
-                    <!-- Leaderboard Section -->
-                    <div id="leaderboard-container" class="card" style="position: sticky; top: 2rem;">
-                        <h3 style="text-align: center; margin-bottom: 0.5rem; color: var(--primary-color);">🏆
-                            Leaderboard</h3>
-                        <h4 id="current-game-name"
-                            style="margin: 0 0 1rem 0; text-align: center; color: var(--text-muted);">Galactic Breaker
-                        </h4>
-                        <div id="leaderboard-list" style="display: flex; flex-direction: column; gap: 0.5rem;">
-                            <!-- Scores will be injected here -->
-                            <div class="loading-spinner">Loading scores...</div>
+                    <div id="game-stage" class="hidden">
+                        <div class="game-header">
+                            <div id="game-timer">Time: 0:00</div>
+                            <div id="game-score" style="display: none; font-weight: bold; color: var(--primary-color);">Score: 0</div>
+                            <button id="add-time-btn" class="btn accent-btn">+1 Min (10 Coins)</button>
+                            <button id="exit-game-btn" class="btn secondary-btn">Exit</button>
                         </div>
+                        <canvas id="game-canvas" width="800" height="600"
+                            style="max-width: 100%; height: auto; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);"></canvas>
                     </div>
                 </div>
             </section>
         </main>
+    </div>
+
+    <!-- Leaderboard Modal -->
+    <div id="leaderboard-modal" class="modal hidden">
+        <div class="modal-content card" style="max-width: 600px; width: 90%; max-height: 80vh;">
+            <div class="modal-header">
+                <h3 style="margin: 0;">🏆 Leaderboard</h3>
+                <button id="close-leaderboard-modal" class="btn text-btn" style="font-size: 1.5rem;">×</button>
+            </div>
+            <div class="modal-body">
+                <h4 id="current-game-name" style="margin: 0 0 1rem 0; text-align: center; color: var(--text-muted);">Galactic Breaker</h4>
+                <div id="leaderboard-list" style="display: flex; flex-direction: column; gap: 0.5rem; max-height: 60vh; overflow-y: auto;">
+                    <!-- Scores will be injected here -->
+                    <div class="loading-spinner">Loading scores...</div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Student Profile Modal -->

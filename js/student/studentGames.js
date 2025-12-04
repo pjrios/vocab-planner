@@ -142,25 +142,56 @@ export class StudentGames {
         if (nameEl) nameEl.textContent = game.name;
         
         // Games with score reporting enabled should show leaderboard
-        const gamesWithLeaderboard = ['level-devil', 'radius-raid', 'packabunchas', 'spacepi'];
+        const gamesWithLeaderboard = ['level-devil', 'radius-raid', 'packabunchas', 'spacepi', 
+                                      'black-hole-square', 'glitch-buster', 'callisto', 'js13k2021',
+                                      'mystic-valley', 'slash-knight'];
         
-        const leaderboardContainer = $('#leaderboard-container');
-        if (gamesWithLeaderboard.includes(game.id)) {
-            // Show leaderboard for games with score reporting
-            if (leaderboardContainer) leaderboardContainer.style.display = 'block';
-            this.loadLeaderboard(game.id);
-        } else if (this.sm.htmlGames.includes(game.id)) {
-            // Hide leaderboard for HTML games without score reporting
-            if (leaderboardContainer) leaderboardContainer.style.display = 'none';
-        } else {
-            // Show leaderboard for canvas-based games
-            if (leaderboardContainer) leaderboardContainer.style.display = 'block';
+        // Update leaderboard button visibility
+        const leaderboardBtn = $('#show-leaderboard-btn');
+        if (leaderboardBtn) {
+            if (gamesWithLeaderboard.includes(game.id) || !this.sm.htmlGames.includes(game.id)) {
+                leaderboardBtn.style.display = 'inline-block';
+            } else {
+                leaderboardBtn.style.display = 'none';
+            }
+        }
+        
+        // Load leaderboard data (will be shown when modal opens)
+        if (gamesWithLeaderboard.includes(game.id) || !this.sm.htmlGames.includes(game.id)) {
             this.loadLeaderboard(game.id);
         }
+    }
+    
+    showLeaderboardModal() {
+        const modal = $('#leaderboard-modal');
+        if (modal) {
+            modal.classList.remove('hidden');
+            // Reload leaderboard for current game
+            const game = this.sm.gamesList[this.sm.currentGameIndex];
+            if (game) {
+                this.loadLeaderboard(game.id);
+            }
+        }
+    }
+    
+    hideLeaderboardModal() {
+        const modal = $('#leaderboard-modal');
+        if (modal) {
+            modal.classList.add('hidden');
+        }
+    }
+    
+    showGameSelection() {
+        // Helper function to show game selection
+        $('#game-stage').classList.add('hidden');
+        $('#game-selection').classList.remove('hidden');
+        // Update leaderboard button visibility
+        this.updateLeaderboardGame();
     }
 
     async loadLeaderboard(gameId) {
         const container = $('#leaderboard-list');
+        if (!container) return; // Modal might not be in DOM yet
         if (!container) return;
 
         // Only show if we have a grade to filter by
@@ -267,133 +298,148 @@ export class StudentGames {
             existingIframe.remove();
         }
         
-        // Check if file exists for games that need building
-        // Note: galaxy_rider.html and glitch buster.html are standalone files, no build needed
-        const needsBuild = ['callisto'].includes(gameId);
-        if (needsBuild) {
-            let fileFound = false;
-            
-            // Check the original path
-            try {
-                const response = await fetch(htmlFile, { method: 'HEAD' });
-                if (response.ok) {
-                    fileFound = true;
-                }
-            } catch (e) {
-                // File doesn't exist
-            }
-            
-            // If not found, try source file as fallback (for callisto)
-            if (!fileFound) {
-                let fallbackPath = null;
-                if (gameId === 'callisto') {
-                    fallbackPath = 'js/games/js13k-callisto-main/src/index.html';
-                }
-                
-                // Check if source file exists
-                if (fallbackPath) {
-                    try {
-                        const fallbackResponse = await fetch(fallbackPath, { method: 'HEAD' });
-                        if (fallbackResponse.ok) {
-                            htmlFile = fallbackPath;
-                            fileFound = true;
-                            console.warn(`Using source file for ${gameId}: ${fallbackPath}`);
-                        }
-                    } catch (e) {
-                        // Source file doesn't exist
-                    }
-                }
-            }
-            
-            // If no file found, show error message
-            if (!fileFound) {
-                const errorDiv = document.createElement('div');
-                errorDiv.style.cssText = 'padding: 40px; text-align: center; background: #fff3cd; border: 2px solid #ffc107; border-radius: 8px; margin: 20px;';
-                errorDiv.innerHTML = `
-                    <h3 style="color: #856404; margin-bottom: 10px;">⚠️ Game Not Built</h3>
-                    <p style="color: #856404; margin-bottom: 20px;">
-                        This game needs to be built before it can be played.
-                    </p>
-                    <div style="background: white; padding: 15px; border-radius: 4px; text-align: left; display: inline-block; max-width: 500px;">
-                        <p style="margin: 5px 0; font-family: monospace; font-size: 0.9em; color: #333;">
-                            ${gameId === 'callisto' ? '<strong>Callisto:</strong><br>cd js/games/js13k-callisto-main<br>npm install<br>npm run build<br><br>Or run: <code>./build-games.command</code>' : ''}
-                        </p>
-                    </div>
-                `;
-                canvas.parentNode.insertBefore(errorDiv, canvas.nextSibling);
-                return;
-            }
-        }
+        // All games now have standalone HTML files, no build checks needed
         
         // Create iframe for the HTML game
         const iframe = document.createElement('iframe');
         iframe.id = `${gameId}-iframe`;
         iframe.src = htmlFile;
         
-        // Games with absolute positioning need specific dimensions to avoid cropping
-        // SpacePi: 960x600 game area, uses top:50% positioning
-        // Radius Raid: 800x600 canvas + 10px padding each side = 820x620, uses top:50% positioning
-        // Mystic Valley & Slash Knight: Full-screen Scratch games
+        // Style game-stage container to center content
+        if (gameStage) {
+            gameStage.style.display = 'flex';
+            gameStage.style.flexDirection = 'column';
+            gameStage.style.alignItems = 'center';
+            gameStage.style.justifyContent = 'center';
+            gameStage.style.width = '100%';
+        }
+        
+        // Games take the width they need and are centered
+        // SpacePi: 960x600 game area
         if (gameId === 'spacepi') {
-            iframe.style.width = '100%';
-            iframe.style.minWidth = '960px';
+            iframe.style.width = '960px';
+            iframe.style.maxWidth = '100%';
             iframe.style.height = '600px';
-            iframe.style.minHeight = '600px';
             iframe.style.display = 'block';
             iframe.style.overflow = 'auto';
         } else if (gameId === 'radius-raid') {
-            iframe.style.width = '100%';
-            iframe.style.minWidth = '820px';
+            // Radius Raid: 800x600 canvas + 10px padding each side = 820x620
+            iframe.style.width = '820px';
+            iframe.style.maxWidth = '100%';
             iframe.style.height = '620px';
-            iframe.style.minHeight = '620px';
             iframe.style.display = 'block';
             iframe.style.overflow = 'auto';
         } else if (gameId === 'mystic-valley' || gameId === 'slash-knight') {
-            // Full-screen Scratch/TurboWarp games
+            // Full-screen Scratch/TurboWarp games - let them size themselves
             iframe.style.width = '100%';
             iframe.style.height = '100%';
             iframe.style.minHeight = '600px';
             iframe.style.display = 'block';
             iframe.style.overflow = 'hidden';
         } else if (gameId === 'black-hole-square' || gameId === 'glitch-buster' || gameId === 'callisto' || gameId === 'js13k2021') {
-            // Responsive games - let them size themselves
-            iframe.style.width = '100%';
+            // Responsive games - let them size themselves but center them
+            iframe.style.width = 'auto';
+            iframe.style.maxWidth = '100%';
             iframe.style.height = '600px';
             iframe.style.minHeight = '400px';
             iframe.style.display = 'block';
             iframe.style.overflow = 'auto';
         } else {
-            iframe.style.width = '100%';
-            iframe.style.height = '600px';
+            // Default: let game size itself, centered
+            iframe.style.width = 'auto';
             iframe.style.maxWidth = '100%';
+            iframe.style.height = '600px';
             iframe.style.display = 'block';
         }
         
         iframe.style.border = 'none';
         iframe.style.borderRadius = '8px';
         iframe.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1)';
+        iframe.style.margin = '0 auto'; // Center the iframe
         
         // Insert iframe after the canvas
         canvas.parentNode.insertBefore(iframe, canvas.nextSibling);
         
-        // Inject score reporting script into the iframe (if scoreMessageType is provided)
-        if (scoreMessageType) {
-            iframe.onload = () => {
-                try {
-                    const iframeWindow = iframe.contentWindow;
-                    const iframeDoc = iframe.contentDocument || iframeWindow.document;
+        // Set up iframe onload handler for optimizations and score reporting
+        const originalOnload = iframe.onload;
+        iframe.onload = () => {
+            try {
+                const iframeWindow = iframe.contentWindow;
+                const iframeDoc = iframe.contentDocument || iframeWindow.document;
+                
+                // Performance optimizations for TurboWarp games
+                if (gameId === 'mystic-valley') {
+                    // Try multiple times to catch the VM when it's ready
+                    let attempts = 0;
+                    const maxAttempts = 20; // Try for up to 4 seconds (20 * 200ms)
                     
-                    // Create and inject score monitoring script
-                    const script = iframeDoc.createElement('script');
-                    script.textContent = this.getScoreMonitoringScript(gameId, scoreMessageType);
-                    iframeDoc.body.appendChild(script);
-                } catch (error) {
-                    // Cross-origin restrictions may prevent script injection
-                    // In that case, we'll rely on the game's own postMessage if it has one
-                    console.warn(`Could not inject score monitoring for ${gameId}:`, error);
+                    const optimizePerformance = () => {
+                        attempts++;
+                        try {
+                            let vm = null;
+                            
+                            // Try to find VM in various locations
+                            if (iframeWindow.vm) {
+                                vm = iframeWindow.vm;
+                            } else if (iframeWindow.Scratch && iframeWindow.Scratch.vm) {
+                                vm = iframeWindow.Scratch.vm;
+                            } else if (iframeWindow.packager && iframeWindow.packager.vm) {
+                                vm = iframeWindow.packager.vm;
+                            }
+                            
+                            if (vm) {
+                                // Don't enable turbo mode (game may not support it)
+                                // Just increase framerate from 10 to 60 FPS for better performance
+                                if (vm.setFramerate) {
+                                    vm.setFramerate(30);
+                                    console.log(`[${gameId}] Framerate set to 60 FPS`);
+                                }
+                                
+                                // Enable interpolation for smoother animation
+                                if (vm.setInterpolation) {
+                                    vm.setInterpolation(true);
+                                    console.log(`[${gameId}] Interpolation enabled`);
+                                }
+                                
+                                return true; // Success
+                            }
+                        } catch (error) {
+                            // Silently continue trying
+                        }
+                        
+                        // Try again if we haven't exceeded max attempts
+                        if (attempts < maxAttempts) {
+                            setTimeout(optimizePerformance, 200);
+                        } else {
+                            console.warn(`[${gameId}] Could not optimize performance after ${maxAttempts} attempts`);
+                        }
+                        return false;
+                    };
+                    
+                    // Start trying after a short delay
+                    setTimeout(optimizePerformance, 500);
                 }
-            };
-        }
+                
+                // Inject score reporting script (if scoreMessageType is provided)
+                if (scoreMessageType) {
+                    try {
+                        const script = iframeDoc.createElement('script');
+                        script.textContent = this.getScoreMonitoringScript(gameId, scoreMessageType);
+                        iframeDoc.body.appendChild(script);
+                    } catch (error) {
+                        console.warn(`Could not inject score monitoring for ${gameId}:`, error);
+                    }
+                }
+            } catch (error) {
+                // Cross-origin restrictions may prevent access
+                console.warn(`Could not access iframe content for ${gameId}:`, error);
+            }
+            
+            // Call original onload if it exists
+            if (originalOnload) {
+                originalOnload();
+            }
+        };
         
         // Set up message listener for score reporting (if scoreMessageType is provided)
         let messageHandler = null;
@@ -466,6 +512,7 @@ export class StudentGames {
                     iframe.remove();
                 }
                 canvas.style.display = 'block';
+                canvas.style.margin = '0 auto'; // Center the canvas
             }
         };
     }
@@ -657,7 +704,15 @@ export class StudentGames {
 
         if (await this.sm.progress.deductCoins(exchangeRate)) {
             $('#game-selection').classList.add('hidden');
-            $('#game-stage').classList.remove('hidden');
+            const gameStage = $('#game-stage');
+            gameStage.classList.remove('hidden');
+            
+            // Ensure game-stage is centered for all games
+            gameStage.style.display = 'flex';
+            gameStage.style.flexDirection = 'column';
+            gameStage.style.alignItems = 'center';
+            gameStage.style.justifyContent = 'center';
+            gameStage.style.width = '100%';
 
             this.sm.gameTimeRemaining = 60;
             this.updateGameTimer();
@@ -673,7 +728,6 @@ export class StudentGames {
 
             // Initialize Game Logic
             const canvas = $('#game-canvas');
-            const gameStage = $('#game-stage');
 
             // Create a callback that offers replay if time remains
             const gameOverCallback = (score) => {
@@ -834,9 +888,8 @@ export class StudentGames {
                     gameStage
                 );
             } else if (type === 'callisto') {
-                // Callisto needs to be built first
-                // Build command: cd js/games/js13k-callisto-main && npm install && npm run build
-                const callistoPath = 'js/games/js13k-callisto-main/dist/index.html';
+                // Callisto - using standalone HTML file
+                const callistoPath = 'js/games/js13k-callisto-main/index.html';
                 this.loadHTMLGame(
                     'callisto',
                     callistoPath,
@@ -892,6 +945,7 @@ export class StudentGames {
         const canvas = $('#game-canvas');
         if (canvas) {
             canvas.style.display = 'block';
+            canvas.style.margin = '0 auto'; // Center the canvas
         }
         
         // Hide score display
@@ -946,8 +1000,7 @@ export class StudentGames {
         // Not enough coins - end game
         notifications.warning('Time up! Not enough coins to continue.');
         this.stopCurrentGame();
-        $('#game-stage').classList.add('hidden');
-        $('#game-selection').classList.remove('hidden');
+        this.showGameSelection();
     }
 
     addGameTime(seconds = 60) {
