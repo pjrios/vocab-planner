@@ -48,7 +48,7 @@ export class StudentGames {
     }
 
     updateGameSelectionUI() {
-        const game = this.sm.games[this.sm.currentGameIndex];
+        const game = this.sm.gamesList[this.sm.currentGameIndex];
         const container = $('#current-game-card');
         if (!container) return;
 
@@ -119,7 +119,7 @@ export class StudentGames {
                 await setDoc(scoreDocRef, scoreData);
 
                 // Refresh leaderboard if we're viewing this game
-                if (this.sm.games && this.sm.games[this.sm.currentGameIndex] && this.sm.games[this.sm.currentGameIndex].id === gameId) {
+                if (this.sm.gamesList && this.sm.gamesList[this.sm.currentGameIndex] && this.sm.gamesList[this.sm.currentGameIndex].id === gameId) {
                     this.loadLeaderboard(gameId);
                 }
             }
@@ -130,7 +130,7 @@ export class StudentGames {
     }
 
     updateLeaderboardGame() {
-        const game = this.sm.games[this.sm.currentGameIndex];
+        const game = this.sm.gamesList[this.sm.currentGameIndex];
         const nameEl = $('#current-game-name');
         if (nameEl) nameEl.textContent = game.name;
         
@@ -258,13 +258,34 @@ export class StudentGames {
         const iframe = document.createElement('iframe');
         iframe.id = `${gameId}-iframe`;
         iframe.src = htmlFile;
-        iframe.style.width = '100%';
-        iframe.style.height = '600px';
+        
+        // Games with absolute positioning need specific dimensions to avoid cropping
+        // SpacePi: 960x600 game area, uses top:50% positioning
+        // Radius Raid: 800x600 canvas + 10px padding each side = 820x620, uses top:50% positioning
+        if (gameId === 'spacepi') {
+            iframe.style.width = '100%';
+            iframe.style.minWidth = '960px';
+            iframe.style.height = '600px';
+            iframe.style.minHeight = '600px';
+            iframe.style.display = 'block';
+            iframe.style.overflow = 'auto';
+        } else if (gameId === 'radius-raid') {
+            iframe.style.width = '100%';
+            iframe.style.minWidth = '820px';
+            iframe.style.height = '620px';
+            iframe.style.minHeight = '620px';
+            iframe.style.display = 'block';
+            iframe.style.overflow = 'auto';
+        } else {
+            iframe.style.width = '100%';
+            iframe.style.height = '600px';
+            iframe.style.maxWidth = '100%';
+            iframe.style.display = 'block';
+        }
+        
         iframe.style.border = 'none';
         iframe.style.borderRadius = '8px';
         iframe.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1)';
-        iframe.style.maxWidth = '100%';
-        iframe.style.display = 'block';
         
         // Insert iframe after the canvas
         canvas.parentNode.insertBefore(iframe, canvas.nextSibling);

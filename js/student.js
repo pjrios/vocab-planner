@@ -53,7 +53,7 @@ class StudentManager {
         this.gameTimerInterval = null;
 
         // Leaderboard variables
-        this.games = [
+        this.gamesList = [
             { id: 'galactic-breaker', name: 'Galactic Breaker', icon: '🧱', desc: 'Break bricks in space!' },
             { id: 'snake', name: 'Snake', icon: '🐍', desc: 'Grow and avoid yourself!' },
             { id: 'flappy-bird', name: 'Flappy Bird', icon: '🐦', desc: 'Fly through pipes!' },
@@ -394,13 +394,13 @@ class StudentManager {
 
         // Game Selection Navigation
         this.addListener('#prev-game-select-btn', 'click', () => {
-            this.currentGameIndex = (this.currentGameIndex - 1 + this.games.length) % this.games.length;
+            this.currentGameIndex = (this.currentGameIndex - 1 + this.gamesList.length) % this.gamesList.length;
             this.games.updateGameSelectionUI();
             this.games.updateLeaderboardGame();
         });
 
         this.addListener('#next-game-select-btn', 'click', () => {
-            this.currentGameIndex = (this.currentGameIndex + 1) % this.games.length;
+            this.currentGameIndex = (this.currentGameIndex + 1) % this.gamesList.length;
             this.games.updateGameSelectionUI();
             this.games.updateLeaderboardGame();
         });
