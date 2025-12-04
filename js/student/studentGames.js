@@ -312,12 +312,14 @@ export class StudentGames {
             gameStage.style.alignItems = 'center';
             gameStage.style.justifyContent = 'center';
             gameStage.style.width = '100%';
+            gameStage.style.minWidth = '600px'; // Prevent container from becoming too narrow
         }
         
         // Games take the width they need and are centered
         // SpacePi: 960x600 game area
         if (gameId === 'spacepi') {
             iframe.style.width = '960px';
+            iframe.style.minWidth = '600px';
             iframe.style.maxWidth = '100%';
             iframe.style.height = '600px';
             iframe.style.display = 'block';
@@ -325,6 +327,7 @@ export class StudentGames {
         } else if (gameId === 'radius-raid') {
             // Radius Raid: 800x600 canvas + 10px padding each side = 820x620
             iframe.style.width = '820px';
+            iframe.style.minWidth = '600px';
             iframe.style.maxWidth = '100%';
             iframe.style.height = '620px';
             iframe.style.display = 'block';
@@ -332,6 +335,7 @@ export class StudentGames {
         } else if (gameId === 'mystic-valley' || gameId === 'slash-knight') {
             // Full-screen Scratch/TurboWarp games - let them size themselves
             iframe.style.width = '100%';
+            iframe.style.minWidth = '600px';
             iframe.style.height = '100%';
             iframe.style.minHeight = '600px';
             iframe.style.display = 'block';
@@ -339,6 +343,7 @@ export class StudentGames {
         } else if (gameId === 'black-hole-square' || gameId === 'glitch-buster' || gameId === 'callisto' || gameId === 'js13k2021') {
             // Responsive games - let them size themselves but center them
             iframe.style.width = 'auto';
+            iframe.style.minWidth = '600px';
             iframe.style.maxWidth = '100%';
             iframe.style.height = '600px';
             iframe.style.minHeight = '400px';
@@ -347,6 +352,7 @@ export class StudentGames {
         } else {
             // Default: let game size itself, centered
             iframe.style.width = 'auto';
+            iframe.style.minWidth = '600px';
             iframe.style.maxWidth = '100%';
             iframe.style.height = '600px';
             iframe.style.display = 'block';
@@ -713,6 +719,7 @@ export class StudentGames {
             gameStage.style.alignItems = 'center';
             gameStage.style.justifyContent = 'center';
             gameStage.style.width = '100%';
+            gameStage.style.minWidth = '600px'; // Prevent container from becoming too narrow
 
             this.sm.gameTimeRemaining = 60;
             this.updateGameTimer();
