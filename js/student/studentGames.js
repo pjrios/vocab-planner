@@ -84,6 +84,13 @@ export class StudentGames {
             return; // Need grade for leaderboard
         }
 
+        // Ensure score is a number
+        const numericScore = typeof score === 'number' ? score : Number(score) || 0;
+        if (numericScore <= 0 && gameId !== 'spacepi') {
+            // Don't save zero or negative scores (except for SpacePi where lower can be better)
+            return;
+        }
+
         try {
             const db = firebaseAuthService.getFirestore();
             const scoresRef = collection(db, 'scores');
@@ -98,11 +105,11 @@ export class StudentGames {
 
             // Only update if this is a new high score or first time playing
             // Note: SpacePi uses "lower is better" scoring, so invert the comparison
-            const existingScore = existingDoc.exists() ? (existingDoc.data().score || 0) : 0;
+            const existingScore = existingDoc.exists() ? (Number(existingDoc.data().score) || 0) : 0;
             const isLowerBetter = gameId === 'spacepi';
             const isNewHighScore = isLowerBetter 
-                ? (!existingDoc.exists() || score < existingScore)
-                : (!existingDoc.exists() || score > existingScore);
+                ? (!existingDoc.exists() || numericScore < existingScore)
+                : (!existingDoc.exists() || numericScore > existingScore);
             
             if (isNewHighScore) {
                 const scoreData = {
@@ -110,7 +117,7 @@ export class StudentGames {
                     name: this.sm.studentProfile.name || 'Anonymous',
                     grade: this.sm.studentProfile.grade,
                     gameId: gameId,
-                    score: score,
+                    score: numericScore, // Ensure we save as number
                     timestamp: serverTimestamp()
                 };
                 
@@ -124,11 +131,14 @@ export class StudentGames {
                 }
                 
                 await setDoc(scoreDocRef, scoreData);
+                console.log(`[Leaderboard] Saved score for ${gameId}: ${numericScore} (previous: ${existingScore})`);
 
                 // Refresh leaderboard if we're viewing this game
                 if (this.sm.gamesList && this.sm.gamesList[this.sm.currentGameIndex] && this.sm.gamesList[this.sm.currentGameIndex].id === gameId) {
                     this.loadLeaderboard(gameId);
                 }
+            } else {
+                console.log(`[Leaderboard] Score not saved for ${gameId}: ${numericScore} is not better than ${existingScore} (isLowerBetter: ${isLowerBetter})`);
             }
         } catch (error) {
             console.error('Error saving score:', error);
@@ -231,6 +241,8 @@ export class StudentGames {
             let rank = 1;
             querySnapshot.forEach((doc) => {
                 const data = doc.data();
+                // Ensure score is a number for display
+                const score = Number(data.score) || 0;
                 const isMe = this.sm.currentUser && data.userId === this.sm.currentUser.uid;
 
                 const row = document.createElement('div');
@@ -250,7 +262,7 @@ export class StudentGames {
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem;">
                             <span style="font-weight: bold; width: 30px;">#${rank}</span>
                             <span style="flex-grow: 1; font-weight: 500;">${data.name}</span>
-                            <span style="font-weight: bold; color: var(--primary-color); font-size: 0.9rem;">Score: ${data.score.toLocaleString()}</span>
+                            <span style="font-weight: bold; color: var(--primary-color); font-size: 0.9rem;">Score: ${score.toLocaleString()}</span>
                         </div>
                         <div style="display: flex; gap: 1rem; font-size: 0.85rem; color: var(--text-muted); margin-left: 30px;">
                             <span>Level: <strong>${meta.level || 0}</strong></span>
@@ -265,7 +277,7 @@ export class StudentGames {
                     row.innerHTML = `
                         <span style="font-weight: bold; width: 30px;">#${rank}</span>
                         <span style="flex-grow: 1;">${data.name}</span>
-                        <span style="font-weight: bold; color: var(--primary-color);">${data.score.toLocaleString()}</span>
+                        <span style="font-weight: bold; color: var(--primary-color);">${score.toLocaleString()}</span>
                     `;
                 }
 
@@ -454,7 +466,8 @@ export class StudentGames {
             messageHandler = (event) => {
                 // Verify message is from our iframe (security check)
                 if (event.data && event.data.type === scoreMessageType) {
-                    const score = event.data.score || 0;
+                    // Ensure score is a number
+                    const score = Number(event.data.score) || 0;
                     const isGameOver = event.data.gameOver || false;
                     
                     // Extract metadata for Level Devil
@@ -477,13 +490,17 @@ export class StudentGames {
                         }
                     }
                     
-                    // Store current score for final reporting
-                    this.sm.currentGameScore = Math.max(this.sm.currentGameScore || 0, score);
+                    // Store current score for final reporting (ensure it's a number)
+                    const currentScore = Number(this.sm.currentGameScore) || 0;
+                    this.sm.currentGameScore = Math.max(currentScore, score);
                     this.sm.currentGameMetadata = metadata; // Store metadata
                     
                     // Save score periodically (not just on game over) to ensure it's saved
-                    if (score > 0 && score !== (this.sm.lastSavedScore || 0)) {
+                    // Compare as numbers to avoid string comparison issues
+                    const lastSaved = Number(this.sm.lastSavedScore) || 0;
+                    if (score > 0 && score !== lastSaved) {
                         this.sm.lastSavedScore = score;
+                        console.log(`[Game] Saving score for ${gameId}: ${score} (previous saved: ${lastSaved})`);
                         this.saveHighScore(gameId, score, metadata).catch(err => {
                             console.error('Error saving score:', err);
                         });
