@@ -164,6 +164,107 @@ body {
     box-shadow: 0 20px 45px -20px rgba(15, 23, 42, 0.75);
 }
 
+/* Activity Card Badges */
+.activity-card {
+    position: relative;
+}
+
+.progress-badge {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+    color: white;
+    padding: 0.25rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.4);
+}
+
+.progress-badge.complete {
+    background: linear-gradient(135deg, #10b981, #059669);
+    box-shadow: 0 2px 8px rgba(16, 185, 129, 0.4);
+}
+
+.coverage-badge,
+.plays-badge {
+    position: absolute;
+    bottom: 0.5rem;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    background: rgba(0, 0, 0, 0.3);
+    padding: 0.2rem 0.4rem;
+    border-radius: 4px;
+    backdrop-filter: blur(4px);
+}
+
+.coverage-badge {
+    left: 0.5rem;
+}
+
+.plays-badge {
+    right: 0.5rem;
+}
+
+/* Completion Screen */
+.completion-screen {
+    text-align: center;
+    padding: 2rem;
+}
+
+.completion-screen h2 {
+    font-size: 1.75rem;
+    margin-bottom: 1rem;
+}
+
+.completion-screen p {
+    color: var(--text-muted);
+    margin-bottom: 0.5rem;
+}
+
+.completion-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.completion-overlay .completion-screen {
+    background: var(--card-bg);
+    padding: 2rem;
+    border-radius: 1rem;
+    border: 1px solid var(--border-color);
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    animation: scaleIn 0.3s ease;
+}
+
+@keyframes scaleIn {
+    from { transform: scale(0.9); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
+}
+
+/* Overall Coverage Indicator */
+.overall-coverage {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
 .option-card .icon {
     font-size: 3.25rem;
     margin-bottom: var(--spacing-sm);

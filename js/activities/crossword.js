@@ -335,9 +335,72 @@ export class CrosswordActivity {
     }
 
     checkProgress() {
+        const score = this.getScore();
         if (this.onProgress) {
-            this.onProgress(this.getScore());
+            this.onProgress(score);
         }
+        
+        // Show completion overlay when done
+        if (score.isComplete && !this.container.querySelector('#replay-crossword')) {
+            setTimeout(() => this.showCompletionOverlay(), 500);
+        }
+    }
+    
+    showCompletionOverlay() {
+        const overlay = document.createElement('div');
+        overlay.className = 'completion-overlay';
+        overlay.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        `;
+        overlay.innerHTML = `
+            <div class="completion-screen" style="background: var(--card-bg, #1e293b); padding: 2rem; border-radius: 1rem; text-align: center;">
+                <h2>🎉 Crossword Complete!</h2>
+                <p>You solved all ${this.placedWords.length} words!</p>
+                <button id="replay-crossword" class="btn primary-btn" style="margin-top: 1rem;">🔄 Play Again</button>
+                <button id="close-crossword" class="btn secondary-btn" style="margin-top: 0.5rem; margin-left: 0.5rem;">Close</button>
+            </div>
+        `;
+        
+        document.body.appendChild(overlay);
+        
+        overlay.querySelector('#replay-crossword').addEventListener('click', () => {
+            document.body.removeChild(overlay);
+            this.restart();
+        });
+        
+        overlay.querySelector('#close-crossword').addEventListener('click', () => {
+            document.body.removeChild(overlay);
+        });
+    }
+    
+    restart() {
+        // Clear saved state
+        const key = `crossword_state_${this.words.length}`;
+        localStorage.removeItem(key);
+        
+        // Reset game state
+        this.grid = [];
+        this.placedWords = [];
+        this.score = 0;
+        
+        // Generate new grid
+        this.generateGrid();
+        
+        // Notify progress system of new session
+        if (this.onProgress) {
+            this.onProgress({ score: 0, details: '0/0 letters correct', isComplete: false, isReplay: true });
+        }
+        
+        this.render();
     }
 
     highlightWord(wordObj) {

@@ -98,10 +98,17 @@ export class ScrambleActivity {
         if (this.currentIndex >= this.words.length) {
             this.container.innerHTML = `
                 <div class="completion-screen">
-                    <h2>All Words Unscrambled!</h2>
-                    <p>Final Score: ${this.score}%</p>
+                    <h2>🎉 All Words Unscrambled!</h2>
+                    <p>You completed ${this.words.length} words!</p>
+                    <button id="replay-scramble" class="btn primary-btn" style="margin-top: 1rem;">🔄 Play Again</button>
                 </div>
             `;
+            
+            // Add replay button listener
+            const replayBtn = this.container.querySelector('#replay-scramble');
+            if (replayBtn) {
+                replayBtn.addEventListener('click', () => this.restart());
+            }
             return;
         }
 
@@ -165,6 +172,30 @@ export class ScrambleActivity {
         if (this.onProgress) {
             this.onProgress(this.getScore());
         }
+    }
+
+    restart() {
+        // Clear saved state
+        const key = `scramble_state_${this.words.length}`;
+        localStorage.removeItem(key);
+        
+        // Reset game state
+        this.currentIndex = 0;
+        this.score = 0;
+        this.currentWord = null;
+        this.shuffledLetters = [];
+        this.userAnswer = [];
+        
+        // Reshuffle words for variety
+        this.words.sort(() => Math.random() - 0.5);
+        
+        // Notify progress system of new session
+        if (this.onProgress) {
+            this.onProgress({ score: 0, details: '0/0 words unscrambled', isComplete: false, isReplay: true });
+        }
+        
+        this.startRound();
+        this.saveState();
     }
 
     render() {

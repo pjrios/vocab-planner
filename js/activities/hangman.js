@@ -98,10 +98,17 @@ export class HangmanActivity {
         if (this.currentWordIndex >= this.words.length) {
             this.container.innerHTML = `
                 <div class="completion-screen">
-                    <h2>All Words Completed!</h2>
-                    <p>Final Score: ${this.score}</p>
+                    <h2>🎉 All Words Completed!</h2>
+                    <p>You completed ${this.words.length} words!</p>
+                    <button id="replay-hangman" class="btn primary-btn" style="margin-top: 1rem;">🔄 Play Again</button>
                 </div>
             `;
+            
+            // Add replay button listener
+            const replayBtn = this.container.querySelector('#replay-hangman');
+            if (replayBtn) {
+                replayBtn.addEventListener('click', () => this.restart());
+            }
             return;
         }
 
@@ -233,6 +240,30 @@ export class HangmanActivity {
         wrapper.appendChild(keyboard);
 
         this.container.appendChild(wrapper);
+    }
+
+    restart() {
+        // Clear saved state
+        const key = `hangman_state_${this.words.length}`;
+        localStorage.removeItem(key);
+        
+        // Reset game state
+        this.currentWordIndex = 0;
+        this.score = 0;
+        this.mistakes = 0;
+        this.guessedLetters = new Set();
+        this.wordStatus = [];
+        
+        // Reshuffle words for variety
+        this.words.sort(() => Math.random() - 0.5);
+        
+        // Notify progress system of new session
+        if (this.onProgress) {
+            this.onProgress({ score: 0, details: '0/0 words completed', isComplete: false, isReplay: true });
+        }
+        
+        this.startRound();
+        this.saveState();
     }
 
     getHangmanSVG(mistakes) {

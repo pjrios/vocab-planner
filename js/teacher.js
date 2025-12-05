@@ -8,7 +8,10 @@ import {
     getDoc,
     getDocs,
     collection,
-    serverTimestamp
+    serverTimestamp,
+    query,
+    where,
+    addDoc
 } from './firebaseService.js';
 
 class TeacherManager {
@@ -33,6 +36,7 @@ class TeacherManager {
         this.currentQuiz = null;
         this.currentRole = 'student';
         this.selectedStudents = new Set();
+        this.dataViewerInitialized = false;
 
         this.init();
     }
@@ -56,9 +60,43 @@ class TeacherManager {
     async initAuth() {
         try {
             await firebaseAuthService.init();
+            
+            // Check for email link sign-in first (highest priority)
+            // This handles when user clicks the magic link in their email
+            if (firebaseAuthService.isEmailSignInLink()) {
+                console.log('Email sign-in link detected, completing sign-in...');
+                try {
+                    const result = await firebaseAuthService.completeEmailSignIn();
+                    console.log('Email link sign-in successful:', result.user.email);
+                    await this.handleAuthWithRole(result.user);
+                    return; // Don't continue with other auth checks
+                } catch (error) {
+                    if (error.message === 'EMAIL_REQUIRED') {
+                        // User opened link on different device, show email confirmation prompt
+                        this.showEmailConfirmPrompt();
+                        return;
+                    }
+                    console.error('Email link sign-in failed:', error);
+                    this.showAuthError('Email sign-in failed. Please try again.');
+                }
+            }
+            
+            // Check for redirect result (when using signInWithRedirect)
+            // This must be called before onAuthStateChanged
+            const redirectResult = await firebaseAuthService.handleRedirectResult();
+            let redirectProcessed = false;
+            if (redirectResult?.user) {
+                console.log('Processing redirect sign-in result for teacher...');
+                await this.handleAuthWithRole(redirectResult.user);
+                redirectProcessed = true;
+            }
+            
             firebaseAuthService.onAuthStateChanged((user) => {
                 if (user) {
-                    this.handleAuthWithRole(user);
+                    // Only handle if we didn't already process redirect result
+                    if (!redirectProcessed || !redirectResult?.user || redirectResult.user.uid !== user.uid) {
+                        this.handleAuthWithRole(user);
+                    }
                 } else {
                     this.isAuthenticated = false;
                     this.currentUser = null;
@@ -70,6 +108,35 @@ class TeacherManager {
             console.error('Failed to initialize teacher auth:', error);
             this.showAuthError('Authentication unavailable. Please refresh to try again.');
             this.showLoginView();
+        }
+    }
+    
+    // Show email confirmation prompt for cross-device sign-in
+    showEmailConfirmPrompt() {
+        const form = $('#email-signin-form');
+        const sentConfirmation = $('#email-sent-confirmation');
+        const confirmPrompt = $('#email-confirm-prompt');
+        
+        if (form) form.style.display = 'none';
+        if (sentConfirmation) sentConfirmation.style.display = 'none';
+        if (confirmPrompt) confirmPrompt.style.display = 'block';
+    }
+    
+    // Handle email link sign-in with confirmed email (cross-device)
+    async completeEmailSignInWithEmail(email) {
+        try {
+            const result = await firebaseAuthService.completeEmailSignIn(email);
+            console.log('Email link sign-in completed:', result.user.email);
+            await this.handleAuthWithRole(result.user);
+        } catch (error) {
+            console.error('Email sign-in with confirmation failed:', error);
+            this.showAuthError('Sign-in failed. The link may have expired. Please request a new one.');
+            this.showLoginView();
+            // Reset UI
+            const form = $('#email-signin-form');
+            const confirmPrompt = $('#email-confirm-prompt');
+            if (form) form.style.display = 'block';
+            if (confirmPrompt) confirmPrompt.style.display = 'none';
         }
     }
 
@@ -130,7 +197,7 @@ class TeacherManager {
     }
 
     switchView(viewId) {
-        const views = ['teacher-login-view', 'teacher-dashboard-view', 'teacher-editor-view', 'teacher-progress-view', 'quiz-maker-view'];
+        const views = ['teacher-login-view', 'teacher-dashboard-view', 'teacher-editor-view', 'teacher-progress-view', 'quiz-maker-view', 'teacher-data-management-view'];
         views.forEach(id => {
             const el = document.getElementById(id);
             if (!el) return;
@@ -148,6 +215,84 @@ class TeacherManager {
         if (!this.ensureAuthenticated(false)) return;
         this.switchView('teacher-dashboard-view');
         $('#export-btn').classList.add('hidden');
+        this.loadGamificationSettings();
+    }
+    
+    async loadGamificationSettings() {
+        try {
+            const db = firebaseAuthService.getFirestore();
+            const settingsRef = doc(db, 'appSettings', 'gamification');
+            const settingsSnap = await getDoc(settingsRef);
+            
+            if (settingsSnap.exists()) {
+                const settings = settingsSnap.data();
+                const exchangeRateInput = $('#global-exchange-rate');
+                const completionBonusInput = $('#global-completion-bonus');
+                const progressRewardInput = $('#global-progress-reward');
+                
+                if (exchangeRateInput && settings.exchangeRate !== undefined) {
+                    exchangeRateInput.value = settings.exchangeRate;
+                }
+                if (completionBonusInput && settings.completionBonus !== undefined) {
+                    completionBonusInput.value = settings.completionBonus;
+                }
+                if (progressRewardInput && settings.progressReward !== undefined) {
+                    progressRewardInput.value = settings.progressReward;
+                }
+            }
+        } catch (error) {
+            console.error('Error loading gamification settings:', error);
+        }
+    }
+    
+    async saveGamificationSettings() {
+        const exchangeRate = parseInt($('#global-exchange-rate')?.value) || 10;
+        const completionBonus = parseInt($('#global-completion-bonus')?.value) || 50;
+        const progressReward = parseInt($('#global-progress-reward')?.value) || 1;
+        
+        const statusEl = $('#gamification-save-status');
+        const saveBtn = $('#save-gamification-btn');
+        
+        try {
+            if (saveBtn) {
+                saveBtn.disabled = true;
+                saveBtn.innerHTML = '⏳ Saving...';
+            }
+            if (statusEl) statusEl.textContent = 'Saving settings...';
+            
+            const db = firebaseAuthService.getFirestore();
+            const settingsRef = doc(db, 'appSettings', 'gamification');
+            await setDoc(settingsRef, {
+                exchangeRate,
+                completionBonus,
+                progressReward,
+                updatedAt: serverTimestamp(),
+                updatedBy: this.currentUser?.email || 'unknown'
+            }, { merge: true });
+            
+            if (statusEl) {
+                statusEl.style.color = 'var(--success-color)';
+                statusEl.textContent = '✅ Settings saved successfully!';
+                setTimeout(() => {
+                    statusEl.textContent = '';
+                    statusEl.style.color = 'var(--text-muted)';
+                }, 3000);
+            }
+            
+            notifications.success('Gamification settings saved!');
+        } catch (error) {
+            console.error('Error saving gamification settings:', error);
+            if (statusEl) {
+                statusEl.style.color = 'var(--danger-color)';
+                statusEl.textContent = '❌ Failed to save settings. Check permissions.';
+            }
+            notifications.error('Failed to save settings.');
+        } finally {
+            if (saveBtn) {
+                saveBtn.disabled = false;
+                saveBtn.innerHTML = '💾 Save Settings';
+            }
+        }
     }
 
     showEditor() {
@@ -204,6 +349,212 @@ class TeacherManager {
         } else {
             errorEl.textContent = '';
             errorEl.style.display = 'none';
+        }
+    }
+
+    showElectronAuthMessage(loginBtn) {
+        // Hide the regular login button
+        if (loginBtn) {
+            loginBtn.style.display = 'none';
+        }
+        
+        // Check if message already exists
+        let electronMsg = $('#electron-auth-message');
+        if (electronMsg) {
+            electronMsg.style.display = 'block';
+            return;
+        }
+        
+        // Create a helpful message for Electron/Cursor users
+        electronMsg = document.createElement('div');
+        electronMsg.id = 'electron-auth-message';
+        electronMsg.style.cssText = `
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(139, 92, 246, 0.15));
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin: 1rem auto;
+            text-align: center;
+            max-width: 400px;
+        `;
+        
+        // Get the current URL (works for both localhost and deployed)
+        const deployedUrl = window.location.href.split('?')[0]; // Remove query params if any
+        
+        electronMsg.innerHTML = `
+            <div style="font-size: 2rem; margin-bottom: 0.5rem;">🌐</div>
+            <h3 style="margin: 0 0 0.75rem 0; color: var(--text-main, #f8fafc);">Sign In via Browser</h3>
+            <p style="margin: 0 0 1rem 0; color: var(--text-muted, #94a3b8); font-size: 0.9rem; line-height: 1.5;">
+                Google Sign-In doesn't work in the Cursor browser. Please use one of these options:
+            </p>
+            <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+                <a href="${deployedUrl}" target="_blank" 
+                   style="display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; 
+                          background: var(--primary-color, #6366f1); color: white; padding: 0.75rem 1.5rem; 
+                          border-radius: 8px; text-decoration: none; font-weight: 600; transition: all 0.2s;">
+                    🔗 Open in Browser
+                </a>
+                <button id="copy-url-btn" 
+                        style="display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
+                               background: transparent; border: 1px solid var(--border-color, rgba(255,255,255,0.2)); 
+                               color: var(--text-main, #f8fafc); padding: 0.75rem 1.5rem; border-radius: 8px; 
+                               cursor: pointer; font-weight: 500; transition: all 0.2s;">
+                    📋 Copy URL
+                </button>
+            </div>
+        `;
+        
+        // Insert after login button's parent
+        const loginSection = loginBtn?.closest('.login-section') || loginBtn?.parentNode;
+        if (loginSection) {
+            loginSection.appendChild(electronMsg);
+        }
+        
+        // Add copy URL functionality
+        setTimeout(() => {
+            const copyBtn = $('#copy-url-btn');
+            if (copyBtn) {
+                copyBtn.addEventListener('click', async () => {
+                    try {
+                        await navigator.clipboard.writeText(deployedUrl);
+                        copyBtn.innerHTML = '✅ Copied!';
+                        setTimeout(() => {
+                            copyBtn.innerHTML = '📋 Copy URL';
+                        }, 2000);
+                    } catch (err) {
+                        // Fallback for older browsers
+                        const textArea = document.createElement('textarea');
+                        textArea.value = deployedUrl;
+                        document.body.appendChild(textArea);
+                        textArea.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(textArea);
+                        copyBtn.innerHTML = '✅ Copied!';
+                        setTimeout(() => {
+                            copyBtn.innerHTML = '📋 Copy URL';
+                        }, 2000);
+                    }
+                });
+            }
+        }, 0);
+        
+        // Clear any error message
+        this.showAuthError('');
+    }
+    
+    // ========== EMAIL LINK AUTHENTICATION LISTENERS ==========
+    initEmailLinkListeners() {
+        // Send email sign-in link button
+        const sendEmailBtn = $('#send-email-link-btn');
+        const emailInput = $('#teacher-email-input');
+        
+        if (sendEmailBtn && emailInput) {
+            sendEmailBtn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                const email = emailInput.value.trim();
+                
+                if (!email) {
+                    this.showAuthError('Please enter your email address.');
+                    emailInput.focus();
+                    return;
+                }
+                
+                // Basic email validation
+                const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+                if (!emailRegex.test(email)) {
+                    this.showAuthError('Please enter a valid email address.');
+                    emailInput.focus();
+                    return;
+                }
+                
+                const originalText = sendEmailBtn.innerHTML;
+                sendEmailBtn.disabled = true;
+                sendEmailBtn.innerHTML = '⏳ Sending...';
+                this.showAuthError('');
+                
+                try {
+                    await firebaseAuthService.sendEmailSignInLink(email);
+                    
+                    // Show success message
+                    const form = $('#email-signin-form');
+                    const sentConfirmation = $('#email-sent-confirmation');
+                    const sentEmailDisplay = $('#sent-email-display');
+                    
+                    if (form) form.style.display = 'none';
+                    if (sentConfirmation) sentConfirmation.style.display = 'block';
+                    if (sentEmailDisplay) sentEmailDisplay.textContent = email;
+                    
+                } catch (error) {
+                    console.error('Failed to send email link:', error);
+                    let errorMessage = 'Failed to send sign-in link. Please try again.';
+                    
+                    if (error.code === 'auth/invalid-email') {
+                        errorMessage = 'Invalid email address.';
+                    } else if (error.code === 'auth/network-request-failed') {
+                        errorMessage = 'Network error. Please check your connection.';
+                    }
+                    
+                    this.showAuthError(errorMessage);
+                    sendEmailBtn.innerHTML = originalText;
+                    sendEmailBtn.disabled = false;
+                }
+            });
+            
+            // Allow pressing Enter to submit
+            emailInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    sendEmailBtn.click();
+                }
+            });
+        }
+        
+        // Resend email button
+        const resendBtn = $('#resend-email-btn');
+        if (resendBtn) {
+            resendBtn.addEventListener('click', () => {
+                // Show the form again
+                const form = $('#email-signin-form');
+                const sentConfirmation = $('#email-sent-confirmation');
+                
+                if (form) form.style.display = 'block';
+                if (sentConfirmation) sentConfirmation.style.display = 'none';
+            });
+        }
+        
+        // Confirm email button (for cross-device sign-in)
+        const confirmEmailBtn = $('#confirm-email-btn');
+        const confirmEmailInput = $('#confirm-email-input');
+        
+        if (confirmEmailBtn && confirmEmailInput) {
+            confirmEmailBtn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                const email = confirmEmailInput.value.trim();
+                
+                if (!email) {
+                    this.showAuthError('Please enter your email address.');
+                    confirmEmailInput.focus();
+                    return;
+                }
+                
+                const originalText = confirmEmailBtn.innerHTML;
+                confirmEmailBtn.disabled = true;
+                confirmEmailBtn.innerHTML = '⏳ Signing in...';
+                this.showAuthError('');
+                
+                await this.completeEmailSignInWithEmail(email);
+                
+                confirmEmailBtn.innerHTML = originalText;
+                confirmEmailBtn.disabled = false;
+            });
+            
+            // Allow pressing Enter to submit
+            confirmEmailInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    confirmEmailBtn.click();
+                }
+            });
         }
     }
 
@@ -506,21 +857,67 @@ class TeacherManager {
     }
 
     initListeners() {
+        // ========== EMAIL LINK SIGN-IN LISTENERS ==========
+        this.initEmailLinkListeners();
+        
+        // ========== GOOGLE SIGN-IN LISTENERS ==========
         const loginButtons = ['#teacher-login-btn', '#teacher-login-view-btn'];
         loginButtons.forEach(selector => {
             const btn = $(selector);
-            if (!btn) return;
-            btn.addEventListener('click', async () => {
+            if (!btn) {
+                console.warn(`Login button not found: ${selector}`);
+                return;
+            }
+            btn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                console.log('Teacher login button clicked!', selector);
                 const originalText = btn.innerHTML;
                 btn.disabled = true;
                 btn.innerHTML = '⏳ Signing in...';
                 this.showAuthError('');
+                
                 try {
-                    await firebaseAuthService.signInWithGoogle();
+                    console.log('Calling signInWithGoogle for teacher...');
+                    const result = await firebaseAuthService.signInWithGoogle();
+                    console.log('signInWithGoogle returned:', result);
+                    
+                    // If using redirect, the page will navigate away, so don't reset button
+                    if (result) {
+                        // Popup succeeded, reset button after delay
+                        setTimeout(() => {
+                            btn.innerHTML = originalText;
+                            btn.disabled = false;
+                        }, 1200);
+                    } else {
+                        console.log('Redirect mode - page should navigate away');
+                        btn.innerHTML = '⏳ Redirecting to Google...';
+                    }
                 } catch (error) {
                     console.error('Teacher sign-in failed:', error);
-                    this.showAuthError('Sign-in failed. Please try again.');
-                } finally {
+                    console.error('Error details:', {
+                        code: error.code,
+                        message: error.message,
+                        stack: error.stack
+                    });
+                    
+                    // Check if this is an Electron/popup issue
+                    if (error.message === 'ELECTRON_NO_POPUP' || error.message === 'POPUP_BLOCKED_MANUAL_AUTH' || 
+                        error.code === 'auth/cancelled-popup-request' || error.code === 'auth/popup-blocked') {
+                        this.showElectronAuthMessage(btn);
+                        btn.innerHTML = originalText;
+                        btn.disabled = false;
+                        return;
+                    }
+                    
+                    let errorMessage = 'Sign-in failed. Please try again.';
+                    if (error.code === 'auth/network-request-failed') {
+                        errorMessage = 'Network error. Please check your connection.';
+                    } else if (error.message) {
+                        errorMessage = `Sign-in failed: ${error.message}`;
+                    }
+                    this.showAuthError(errorMessage);
                     btn.innerHTML = originalText;
                     btn.disabled = false;
                 }
@@ -549,6 +946,14 @@ class TeacherManager {
         $('#view-progress-btn').addEventListener('click', () => {
             this.showProgressView();
         });
+        
+        // Gamification Settings
+        const saveGamificationBtn = $('#save-gamification-btn');
+        if (saveGamificationBtn) {
+            saveGamificationBtn.addEventListener('click', () => {
+                this.saveGamificationSettings();
+            });
+        }
 
         $('#back-to-dashboard').addEventListener('click', () => {
             if (!this.ensureAuthenticated(false)) return;
@@ -571,6 +976,15 @@ class TeacherManager {
         $('#close-detail-modal').addEventListener('click', () => {
             $('#student-detail-modal').classList.add('hidden');
             this.activeStudentId = null;
+        });
+
+        // Data Management View Navigation
+        $('#open-data-management-btn')?.addEventListener('click', () => {
+            this.showDataManagementView();
+        });
+
+        $('#back-to-progress-from-data')?.addEventListener('click', () => {
+            this.showProgressView();
         });
         $('#coin-adjust-btn').addEventListener('click', () => this.handleCoinAdjust());
         $$('.quick-coin-btn').forEach(btn => {
@@ -1207,6 +1621,9 @@ class TeacherManager {
         this.populateFilters();
         this.applyFilters();
         this.renderProgressStats();
+        this.initExportListeners();
+        this.populateExportGradeSelect();
+        this.initDataViewer();
 
         if (loadingEl) loadingEl.classList.add('hidden');
     }
@@ -1222,7 +1639,7 @@ class TeacherManager {
             this.filteredStudentData = [...this.allStudentData];
         } catch (error) {
             console.error('Error fetching student progress:', error);
-            alert('Failed to load student data.');
+            notifications.error('Failed to load student data.');
         }
     }
 
@@ -1452,11 +1869,18 @@ class TeacherManager {
         try {
             const db = firebaseAuthService.getFirestore();
             const roleRef = doc(db, 'userRoles', this.activeStudentId);
-            await setDoc(roleRef, { role: role }, { merge: true });
-            alert(`Role updated to ${role}. The user may need to refresh their page.`);
+            // Get email from already loaded student data if available
+            const student = this.allStudentData.find(s => s.id === this.activeStudentId);
+            const email = student?.email || student?.studentProfile?.email || '';
+            await setDoc(roleRef, { role: role, email: email }, { merge: true });
+            notifications.success(`Role updated to ${role}. The user must sign out and sign back in to access teacher features.`);
+            // Refresh the student details to show updated role
+            if (student) {
+                await this.showStudentDetails(student);
+            }
         } catch (e) {
             console.error('Error updating role:', e);
-            alert('Failed to update role.');
+            notifications.error('Failed to update role. Make sure Firestore rules are deployed.');
         }
     }
     updateCoinStatus(message, state = 'muted') {
@@ -1940,6 +2364,1492 @@ const startTeacherApp = () => {
         window.teacherApp = new TeacherManager();
     }
 };
+
+// ============================================
+// Data Export & Reset Functions
+// ============================================
+
+// Add these methods to TeacherManager class
+Object.assign(TeacherManager.prototype, {
+    populateExportGradeSelect() {
+        const gradeSelect = $('#export-grade-select');
+        if (!gradeSelect) return;
+        
+        const grades = new Set();
+        this.allStudentData.forEach(student => {
+            const profile = student.studentProfile || {};
+            if (profile.grade) grades.add(profile.grade);
+        });
+        
+        gradeSelect.innerHTML = '<option value="">Select grade...</option>';
+        Array.from(grades).sort().forEach(g => {
+            const opt = createElement('option');
+            opt.value = g;
+            opt.textContent = g;
+            gradeSelect.appendChild(opt);
+        });
+    },
+
+    initExportListeners() {
+        // Student selection radio buttons
+        const studentSelectionRadios = document.querySelectorAll('input[name="student-selection"]');
+        studentSelectionRadios.forEach(radio => {
+            radio.addEventListener('change', () => {
+                const gradeSelect = $('#export-grade-select');
+                if (radio.value === 'grade') {
+                    if (gradeSelect) gradeSelect.disabled = false;
+                } else {
+                    if (gradeSelect) gradeSelect.disabled = true;
+                }
+            });
+        });
+
+        // Preview button
+        const previewBtn = $('#preview-data-btn');
+        if (previewBtn) {
+            previewBtn.addEventListener('click', () => this.previewData());
+        }
+
+        // Export buttons
+        const exportJsonBtn = $('#export-json-btn');
+        if (exportJsonBtn) {
+            exportJsonBtn.addEventListener('click', () => this.exportData('json'));
+        }
+
+        const exportCsvBtn = $('#export-csv-btn');
+        if (exportCsvBtn) {
+            exportCsvBtn.addEventListener('click', () => this.exportData('csv'));
+        }
+    },
+
+    getSelectedStudentIds() {
+        const selection = document.querySelector('input[name="student-selection"]:checked')?.value || 'all';
+        
+        if (selection === 'all') {
+            return this.allStudentData.map(s => s.id);
+        } else if (selection === 'grade') {
+            const grade = $('#export-grade-select')?.value;
+            if (!grade) return [];
+            return this.allStudentData
+                .filter(s => (s.studentProfile || {}).grade === grade)
+                .map(s => s.id);
+        } else if (selection === 'specific') {
+            return Array.from(this.selectedStudents);
+        }
+        return [];
+    },
+
+    getSelectedDataTypes() {
+        const types = [];
+        if ($('#export-progress')?.checked) types.push('studentProgress');
+        if ($('#export-scores')?.checked) types.push('scores');
+        if ($('#export-roles')?.checked) types.push('userRoles');
+        return types;
+    },
+
+    async previewData() {
+        const studentIds = this.getSelectedStudentIds();
+        const dataTypes = this.getSelectedDataTypes();
+        
+        if (studentIds.length === 0) {
+            notifications.warning('Please select at least one student.');
+            return;
+        }
+        
+        if (dataTypes.length === 0) {
+            notifications.warning('Please select at least one data type to preview.');
+            return;
+        }
+
+        const previewSection = $('#data-preview-section');
+        const previewSummary = $('#preview-summary');
+        const previewTables = $('#preview-tables');
+        
+        if (!previewSection || !previewSummary || !previewTables) return;
+
+        previewSection.style.display = 'block';
+        previewSummary.innerHTML = '<div class="loading-spinner">Loading preview...</div>';
+        previewTables.innerHTML = '';
+
+        try {
+            const preview = await this.fetchPreviewData(studentIds, dataTypes);
+            this.renderPreview(preview, previewSummary, previewTables);
+        } catch (error) {
+            console.error('Error previewing data:', error);
+            notifications.error('Failed to load preview. Please try again.');
+            previewSummary.innerHTML = '<p style="color: var(--danger-color);">Error loading preview.</p>';
+        }
+    },
+
+    async fetchPreviewData(studentIds, dataTypes) {
+        const db = firebaseAuthService.getFirestore();
+        const preview = {
+            studentProgress: [],
+            scores: [],
+            userRoles: [],
+            summary: {
+                totalStudents: studentIds.length,
+                totalProgressRecords: 0,
+                totalScores: 0,
+                totalRoles: 0,
+                dateRange: { start: null, end: null },
+                totalCoins: 0,
+                gamesPlayed: new Set()
+            }
+        };
+
+        if (dataTypes.includes('studentProgress')) {
+            for (const studentId of studentIds) {
+                try {
+                    const docRef = doc(db, 'studentProgress', studentId);
+                    const docSnap = await getDoc(docRef);
+                    if (docSnap.exists()) {
+                        const data = { studentId, ...docSnap.data() };
+                        preview.studentProgress.push(data);
+                        preview.summary.totalProgressRecords++;
+                        
+                        // Calculate statistics
+                        const coinData = data.coinData || {};
+                        preview.summary.totalCoins += (coinData.balance || 0);
+                        
+                        if (data.updatedAt) {
+                            const date = data.updatedAt.toDate ? data.updatedAt.toDate() : new Date(data.updatedAt.seconds * 1000);
+                            if (!preview.summary.dateRange.start || date < preview.summary.dateRange.start) {
+                                preview.summary.dateRange.start = date;
+                            }
+                            if (!preview.summary.dateRange.end || date > preview.summary.dateRange.end) {
+                                preview.summary.dateRange.end = date;
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.error(`Error fetching progress for ${studentId}:`, error);
+                }
+            }
+        }
+
+        if (dataTypes.includes('scores')) {
+            const scoresRef = collection(db, 'scores');
+            for (const studentId of studentIds) {
+                try {
+                    const q = query(scoresRef, where('userId', '==', studentId));
+                    const snapshot = await getDocs(q);
+                    snapshot.forEach(doc => {
+                        preview.scores.push({ scoreId: doc.id, ...doc.data() });
+                        preview.summary.totalScores++;
+                        if (doc.data().gameId) {
+                            preview.summary.gamesPlayed.add(doc.data().gameId);
+                        }
+                    });
+                } catch (error) {
+                    console.error(`Error fetching scores for ${studentId}:`, error);
+                }
+            }
+        }
+
+        if (dataTypes.includes('userRoles')) {
+            for (const studentId of studentIds) {
+                try {
+                    const docRef = doc(db, 'userRoles', studentId);
+                    const docSnap = await getDoc(docRef);
+                    if (docSnap.exists()) {
+                        preview.userRoles.push({ userId: studentId, ...docSnap.data() });
+                        preview.summary.totalRoles++;
+                    }
+                } catch (error) {
+                    console.error(`Error fetching role for ${studentId}:`, error);
+                }
+            }
+        }
+
+        return preview;
+    },
+
+    renderPreview(preview, summaryEl, tablesEl) {
+        // Render summary
+        const dateRange = preview.summary.dateRange;
+        const dateStr = dateRange.start && dateRange.end
+            ? `${dateRange.start.toLocaleDateString()} to ${dateRange.end.toLocaleDateString()}`
+            : 'N/A';
+
+        // Count vocabulary units
+        let totalVocabUnits = 0;
+        if (preview.studentProgress.length > 0) {
+            preview.studentProgress.forEach(item => {
+                if (item.units) {
+                    totalVocabUnits += Object.keys(item.units).length;
+                }
+            });
+        }
+
+        summaryEl.innerHTML = `
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; padding: 1rem; background: rgba(15, 23, 42, 0.4); border-radius: 8px; border: 1px solid var(--border-color, rgba(255, 255, 255, 0.125));">
+                <div>
+                    <div style="font-size: 0.8rem; color: var(--text-muted, #cbd5f5);">Total Students</div>
+                    <div style="font-size: 1.5rem; font-weight: 600; color: var(--text-main, #f8fafc);">${preview.summary.totalStudents}</div>
+                </div>
+                ${preview.summary.totalProgressRecords > 0 ? `
+                <div>
+                    <div style="font-size: 0.8rem; color: var(--text-muted, #cbd5f5);">Progress Records</div>
+                    <div style="font-size: 1.5rem; font-weight: 600; color: var(--text-main, #f8fafc);">${preview.summary.totalProgressRecords}</div>
+                </div>
+                ${totalVocabUnits > 0 ? `
+                <div>
+                    <div style="font-size: 0.8rem; color: var(--text-muted, #cbd5f5);">Vocabulary Units</div>
+                    <div style="font-size: 1.5rem; font-weight: 600; color: var(--text-main, #f8fafc);">${totalVocabUnits}</div>
+                </div>
+                ` : ''}
+                <div>
+                    <div style="font-size: 0.8rem; color: var(--text-muted, #cbd5f5);">Total Coins</div>
+                    <div style="font-size: 1.5rem; font-weight: 600; color: var(--text-main, #f8fafc);">${preview.summary.totalCoins.toLocaleString()}</div>
+                </div>
+                ` : ''}
+                ${preview.summary.totalScores > 0 ? `
+                <div>
+                    <div style="font-size: 0.8rem; color: var(--text-muted, #cbd5f5);">Game Scores</div>
+                    <div style="font-size: 1.5rem; font-weight: 600; color: var(--text-main, #f8fafc);">${preview.summary.totalScores}</div>
+                </div>
+                ` : ''}
+                <div>
+                    <div style="font-size: 0.8rem; color: var(--text-muted, #cbd5f5);">Date Range</div>
+                    <div style="font-size: 0.9rem; font-weight: 600; color: var(--text-main, #f8fafc);">${dateStr}</div>
+                </div>
+            </div>
+        `;
+
+        // Render tables
+        let tablesHTML = '';
+        
+        if (preview.studentProgress.length > 0) {
+            tablesHTML += `
+                <h5 style="margin-top: 1.5rem; margin-bottom: 0.5rem;">Student Progress (${preview.studentProgress.length} records)</h5>
+                <table style="width: 100%; border-collapse: collapse; margin-bottom: 1.5rem;">
+                    <thead>
+                        <tr style="border-bottom: 2px solid var(--border-color);">
+                            <th style="padding: 0.75rem; text-align: left;">Student ID</th>
+                            <th style="padding: 0.75rem; text-align: left;">Name</th>
+                            <th style="padding: 0.75rem; text-align: left;">Grade</th>
+                            <th style="padding: 0.75rem; text-align: right;">Coins</th>
+                            <th style="padding: 0.75rem; text-align: left;">Last Active</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${preview.studentProgress.slice(0, 10).map(item => {
+                            const profile = item.studentProfile || {};
+                            const name = profile.firstName && profile.lastName
+                                ? `${profile.firstName} ${profile.lastName}`
+                                : (profile.name || 'Unknown');
+                            const coins = (item.coinData || {}).balance || 0;
+                            const lastActive = item.updatedAt
+                                ? (item.updatedAt.toDate ? item.updatedAt.toDate() : new Date(item.updatedAt.seconds * 1000)).toLocaleDateString()
+                                : '-';
+                            return `
+                                <tr style="border-bottom: 1px solid var(--border-color);">
+                                    <td style="padding: 0.75rem;">${item.studentId}</td>
+                                    <td style="padding: 0.75rem;">${name}</td>
+                                    <td style="padding: 0.75rem;">${profile.grade || '-'}</td>
+                                    <td style="padding: 0.75rem; text-align: right;">${coins}</td>
+                                    <td style="padding: 0.75rem;">${lastActive}</td>
+                                </tr>
+                            `;
+                        }).join('')}
+                        ${preview.studentProgress.length > 10 ? `
+                            <tr>
+                                <td colspan="5" style="padding: 0.75rem; text-align: center; color: var(--text-muted);">
+                                    ... and ${preview.studentProgress.length - 10} more records
+                                </td>
+                            </tr>
+                        ` : ''}
+                    </tbody>
+                </table>
+            `;
+        }
+
+        if (preview.scores.length > 0) {
+            tablesHTML += `
+                <h5 style="margin-top: 1.5rem; margin-bottom: 0.5rem;">Leaderboard Scores (${preview.scores.length} records)</h5>
+                <table style="width: 100%; border-collapse: collapse; margin-bottom: 1.5rem;">
+                    <thead>
+                        <tr style="border-bottom: 2px solid var(--border-color);">
+                            <th style="padding: 0.75rem; text-align: left;">Student</th>
+                            <th style="padding: 0.75rem; text-align: left;">Game</th>
+                            <th style="padding: 0.75rem; text-align: right;">Score</th>
+                            <th style="padding: 0.75rem; text-align: left;">Date</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${preview.scores.slice(0, 10).map(item => {
+                            const date = item.timestamp
+                                ? (item.timestamp.toDate ? item.timestamp.toDate() : new Date(item.timestamp.seconds * 1000)).toLocaleDateString()
+                                : '-';
+                            return `
+                                <tr style="border-bottom: 1px solid var(--border-color);">
+                                    <td style="padding: 0.75rem;">${item.name || item.userId}</td>
+                                    <td style="padding: 0.75rem;">${item.gameId || '-'}</td>
+                                    <td style="padding: 0.75rem; text-align: right;">${(item.score || 0).toLocaleString()}</td>
+                                    <td style="padding: 0.75rem;">${date}</td>
+                                </tr>
+                            `;
+                        }).join('')}
+                        ${preview.scores.length > 10 ? `
+                            <tr>
+                                <td colspan="4" style="padding: 0.75rem; text-align: center; color: var(--text-muted);">
+                                    ... and ${preview.scores.length - 10} more records
+                                </td>
+                            </tr>
+                        ` : ''}
+                    </tbody>
+                </table>
+            `;
+        }
+
+        tablesEl.innerHTML = tablesHTML || '<p style="color: var(--text-muted);">No data to display.</p>';
+    },
+
+    async exportData(format) {
+        const studentIds = this.getSelectedStudentIds();
+        const dataTypes = this.getSelectedDataTypes();
+        
+        if (studentIds.length === 0) {
+            notifications.warning('Please select at least one student.');
+            return;
+        }
+        
+        if (dataTypes.length === 0) {
+            notifications.warning('Please select at least one data type to export.');
+            return;
+        }
+
+        // Show loading indicator
+        const loadingEl = $('#export-loading');
+        const loadingText = $('#export-loading-text');
+        const progressBar = $('#export-progress-bar');
+        const jsonBtn = $('#export-json-btn');
+        const csvBtn = $('#export-csv-btn');
+        
+        if (loadingEl) loadingEl.style.display = 'block';
+        if (jsonBtn) jsonBtn.disabled = true;
+        if (csvBtn) csvBtn.disabled = true;
+        
+        const updateProgress = (percent, text) => {
+            if (progressBar) progressBar.style.width = `${percent}%`;
+            if (loadingText) loadingText.textContent = text;
+        };
+
+        try {
+            updateProgress(5, 'Starting export...');
+            
+            const exportData = {};
+            const totalSteps = dataTypes.length;
+            let currentStep = 0;
+            
+            if (dataTypes.includes('studentProgress')) {
+                updateProgress(10 + (currentStep / totalSteps) * 70, `Exporting student progress (${studentIds.length} students)...`);
+                exportData.studentProgress = await this.exportStudentProgress(studentIds);
+                currentStep++;
+            }
+            
+            if (dataTypes.includes('scores')) {
+                updateProgress(10 + (currentStep / totalSteps) * 70, 'Exporting leaderboard scores...');
+                exportData.scores = await this.exportScores(studentIds);
+                currentStep++;
+            }
+            
+            if (dataTypes.includes('userRoles')) {
+                updateProgress(10 + (currentStep / totalSteps) * 70, 'Exporting user roles...');
+                exportData.userRoles = await this.exportUserRoles(studentIds);
+                currentStep++;
+            }
+
+            updateProgress(85, 'Preparing download...');
+
+            if (format === 'json') {
+                this.downloadJSON(exportData, `data-export-${Date.now()}.json`);
+            } else if (format === 'csv') {
+                this.downloadCSV(exportData, `data-export-${Date.now()}.csv`);
+            }
+
+            updateProgress(95, 'Finalizing...');
+
+            // Mark export as complete
+            await this.markExportComplete(dataTypes, studentIds, format);
+            
+            updateProgress(100, 'Export complete!');
+            
+            // Hide loading after a brief delay to show completion
+            setTimeout(() => {
+                if (loadingEl) loadingEl.style.display = 'none';
+                if (jsonBtn) jsonBtn.disabled = false;
+                if (csvBtn) csvBtn.disabled = false;
+            }, 500);
+            
+            notifications.success('Data exported successfully!');
+        } catch (error) {
+            console.error('Error exporting data:', error);
+            
+            // Hide loading on error
+            if (loadingEl) loadingEl.style.display = 'none';
+            if (jsonBtn) jsonBtn.disabled = false;
+            if (csvBtn) csvBtn.disabled = false;
+            
+            notifications.error('Failed to export data. Please try again.');
+        }
+    },
+
+    async exportStudentProgress(studentIds) {
+        const db = firebaseAuthService.getFirestore();
+        const progressData = [];
+        
+        for (const studentId of studentIds) {
+            try {
+                const docRef = doc(db, 'studentProgress', studentId);
+                const docSnap = await getDoc(docRef);
+                if (docSnap.exists()) {
+                    progressData.push({
+                        studentId: studentId,
+                        ...docSnap.data()
+                    });
+                }
+            } catch (error) {
+                console.error(`Error exporting progress for ${studentId}:`, error);
+            }
+        }
+        
+        return progressData;
+    },
+
+    async exportScores(studentIds) {
+        const db = firebaseAuthService.getFirestore();
+        const scoresRef = collection(db, 'scores');
+        const allScores = [];
+        
+        for (const studentId of studentIds) {
+            try {
+                const q = query(scoresRef, where('userId', '==', studentId));
+                const snapshot = await getDocs(q);
+                snapshot.forEach(doc => {
+                    allScores.push({
+                        scoreId: doc.id,
+                        ...doc.data()
+                    });
+                });
+            } catch (error) {
+                console.error(`Error exporting scores for ${studentId}:`, error);
+            }
+        }
+        
+        return allScores;
+    },
+
+    async exportUserRoles(studentIds) {
+        const db = firebaseAuthService.getFirestore();
+        const rolesData = [];
+        
+        for (const studentId of studentIds) {
+            try {
+                const docRef = doc(db, 'userRoles', studentId);
+                const docSnap = await getDoc(docRef);
+                if (docSnap.exists()) {
+                    rolesData.push({
+                        userId: studentId,
+                        ...docSnap.data()
+                    });
+                }
+            } catch (error) {
+                console.error(`Error exporting role for ${studentId}:`, error);
+            }
+        }
+        
+        return rolesData;
+    },
+
+    downloadJSON(data, filename) {
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    },
+
+    downloadCSV(data, filename) {
+        // Convert to CSV format
+        let csv = '';
+        
+        if (data.studentProgress && data.studentProgress.length > 0) {
+            csv += 'Student Progress (includes vocabulary progress, scores, coins, images)\n';
+            csv += 'Student ID,Name,Grade,Coins,Total Earned,Vocab Units,Last Active\n';
+            data.studentProgress.forEach(item => {
+                const profile = item.studentProfile || {};
+                const name = profile.firstName && profile.lastName
+                    ? `${profile.firstName} ${profile.lastName}`
+                    : (profile.name || 'Unknown');
+                const coins = (item.coinData || {}).balance || 0;
+                const totalEarned = (item.coinData || {}).totalEarned || 0;
+                const vocabUnits = item.units ? Object.keys(item.units).length : 0;
+                const lastActive = item.updatedAt
+                    ? (item.updatedAt.toDate ? item.updatedAt.toDate() : new Date(item.updatedAt.seconds * 1000)).toISOString()
+                    : '';
+                csv += `"${item.studentId}","${name}","${profile.grade || ''}",${coins},${totalEarned},${vocabUnits},"${lastActive}"\n`;
+            });
+            csv += '\n';
+            
+            // Add vocabulary progress details
+            csv += 'Vocabulary Progress Details\n';
+            csv += 'Student ID,Vocabulary Name,Activity,Score,Last Updated\n';
+            data.studentProgress.forEach(item => {
+                if (item.units) {
+                    Object.entries(item.units).forEach(([vocabName, unitData]) => {
+                        if (unitData.scores) {
+                            Object.entries(unitData.scores).forEach(([activity, scoreData]) => {
+                                const score = scoreData.score || 0;
+                                const updated = scoreData.updatedAt
+                                    ? (scoreData.updatedAt.toDate ? scoreData.updatedAt.toDate() : new Date(scoreData.updatedAt.seconds * 1000)).toISOString()
+                                    : '';
+                                csv += `"${item.studentId}","${vocabName}","${activity}",${score},"${updated}"\n`;
+                            });
+                        }
+                    });
+                }
+            });
+            csv += '\n';
+        }
+        
+        if (data.scores && data.scores.length > 0) {
+            csv += 'Leaderboard Scores\n';
+            csv += 'Student,Game,Score,Grade,Date\n';
+            data.scores.forEach(item => {
+                const date = item.timestamp
+                    ? (item.timestamp.toDate ? item.timestamp.toDate() : new Date(item.timestamp.seconds * 1000)).toISOString()
+                    : '';
+                csv += `"${item.name || item.userId}","${item.gameId || ''}",${item.score || 0},"${item.grade || ''}","${date}"\n`;
+            });
+            csv += '\n';
+        }
+        
+        if (data.userRoles && data.userRoles.length > 0) {
+            csv += 'User Roles\n';
+            csv += 'User ID,Role,Email\n';
+            data.userRoles.forEach(item => {
+                csv += `"${item.userId}","${item.role || ''}","${item.email || ''}"\n`;
+            });
+        }
+        
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    },
+
+    async markExportComplete(dataTypes, studentIds, exportFormat) {
+        const exportRecord = {
+            timestamp: new Date().toISOString(),
+            teacherId: this.currentUser?.uid || '',
+            dataTypes: dataTypes,
+            studentCount: studentIds.length,
+            format: exportFormat,
+            filename: `export-${Date.now()}.${exportFormat}`
+        };
+        
+        // Store in localStorage
+        localStorage.setItem('lastExport', JSON.stringify(exportRecord));
+        
+        // Update UI
+        const exportStatus = $('#export-status');
+        const exportStatusText = $('#export-status-text');
+        if (exportStatus && exportStatusText) {
+            exportStatus.style.display = 'block';
+            exportStatusText.textContent = `Export completed: ${exportRecord.filename}`;
+        }
+        
+        // Enable reset section
+        this.enableResetSection();
+        
+        // Log to Firestore (optional audit)
+        try {
+            const db = firebaseAuthService.getFirestore();
+            await addDoc(collection(db, 'exportLogs'), {
+                ...exportRecord,
+                timestamp: serverTimestamp()
+            });
+        } catch (error) {
+            console.error('Error logging export:', error);
+            // Don't fail if audit logging fails
+        }
+    },
+
+    enableResetSection() {
+        const resetSection = $('#data-reset-section');
+        const resetBtn = $('#reset-data-btn');
+        const resetStatus = $('#reset-export-status');
+        
+        if (resetSection && resetBtn && resetStatus) {
+            resetSection.style.opacity = '1';
+            resetSection.style.pointerEvents = 'auto';
+            resetBtn.disabled = false;
+            resetStatus.innerHTML = '<span style="color: var(--success-color);">✅ Export completed. Reset is now enabled.</span>';
+        }
+    },
+
+    // ============================================
+    // Data Viewer Functions
+    // ============================================
+    
+    initDataViewer() {
+        // Check if already initialized to prevent duplicate listeners
+        if (this.dataViewerInitialized) return;
+        this.dataViewerInitialized = true;
+
+        // Tab switching
+        const tabButtons = document.querySelectorAll('.data-tab-btn');
+        tabButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const tab = btn.dataset.tab;
+                this.switchDataTab(tab);
+            });
+        });
+        
+        // Dashboard grade filter
+        const dashboardGradeFilter = $('#dashboard-grade-filter');
+        if (dashboardGradeFilter) {
+            dashboardGradeFilter.addEventListener('change', () => {
+                this.loadDashboardData();
+            });
+        }
+
+        // File input
+        const fileInput = $('#load-json-file');
+        const chooseFileBtn = $('#choose-file-btn');
+        const clearFileBtn = $('#clear-file-btn');
+        
+        if (chooseFileBtn && fileInput) {
+            chooseFileBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (fileInput) {
+                    fileInput.click();
+                }
+            });
+        }
+
+        if (fileInput) {
+            fileInput.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    this.loadJSONFile(file);
+                    // Reset input so same file can be selected again
+                    e.target.value = '';
+                }
+            });
+        }
+
+        if (clearFileBtn) {
+            clearFileBtn.addEventListener('click', () => {
+                this.clearLoadedData();
+            });
+        }
+
+        // Drag and drop
+        const fileLoader = $('#file-loader');
+        if (fileLoader) {
+            fileLoader.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                fileLoader.style.borderColor = 'var(--primary-color, #6366f1)';
+                fileLoader.style.background = 'rgba(99, 102, 241, 0.2)';
+            });
+
+            fileLoader.addEventListener('dragleave', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                fileLoader.style.borderColor = 'var(--border-color, rgba(255, 255, 255, 0.125))';
+                fileLoader.style.background = 'rgba(15, 23, 42, 0.3)';
+            });
+
+            fileLoader.addEventListener('drop', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                fileLoader.style.borderColor = 'var(--border-color, rgba(255, 255, 255, 0.125))';
+                fileLoader.style.background = 'rgba(15, 23, 42, 0.3)';
+                
+                const file = e.dataTransfer.files[0];
+                if (file && (file.type === 'application/json' || file.name.endsWith('.json'))) {
+                    this.loadJSONFile(file);
+                } else {
+                    notifications.warning('Please drop a JSON file.');
+                }
+            });
+        }
+    },
+
+    switchDataTab(tab) {
+        // Update tab buttons
+        document.querySelectorAll('.data-tab-btn').forEach(btn => {
+            if (btn.dataset.tab === tab) {
+                btn.classList.add('active');
+                btn.style.borderBottomColor = 'var(--primary-color, #6366f1)';
+                btn.style.color = 'var(--text-main, #f8fafc)';
+            } else {
+                btn.classList.remove('active');
+                btn.style.borderBottomColor = 'transparent';
+                btn.style.color = 'var(--text-muted, #cbd5f5)';
+            }
+        });
+
+        // Update tab content
+        document.querySelectorAll('.data-tab-content').forEach(content => {
+            content.style.display = 'none';
+        });
+
+        if (tab === 'dashboard') {
+            $('#data-dashboard-section').style.display = 'block';
+            this.loadDashboardData();
+        } else if (tab === 'export') {
+            $('#data-export-section').style.display = 'block';
+        } else if (tab === 'view') {
+            $('#data-viewer-section').style.display = 'block';
+        } else if (tab === 'reset') {
+            $('#data-reset-section').style.display = 'block';
+        }
+    },
+
+    showDataManagementView() {
+        if (!this.ensureAuthenticated(false)) return;
+        this.switchView('teacher-data-management-view');
+        // Initialize data viewer if not already done
+        if (!this.dataViewerInitialized) {
+            this.initDataViewer();
+        }
+        // Switch to dashboard tab by default
+        this.switchDataTab('dashboard');
+    },
+
+    async loadDashboardData() {
+        // Ensure student data is loaded
+        if (this.allStudentData.length === 0) {
+            await this.fetchAllStudentProgress();
+        }
+        
+        // Populate grade filter dropdown
+        this.populateDashboardGradeFilter();
+        
+        // Get filtered data based on selected grade
+        const filteredData = this.getDashboardFilteredData();
+        
+        // Load summary stats
+        const totalStudents = filteredData.length;
+        const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
+        const activeStudents = filteredData.filter(s => {
+            const lastActive = s.updatedAt?.toMillis?.() || s.updatedAt || 0;
+            return lastActive > sevenDaysAgo;
+        }).length;
+        
+        const totalCoins = filteredData.reduce((sum, s) => {
+            const coins = s.coinData?.balance || s.coins || 0;
+            return sum + coins;
+        }, 0);
+        const avgCoins = totalStudents > 0 ? Math.round(totalCoins / totalStudents) : 0;
+
+        // Update summary cards
+        $('#dashboard-total-students').textContent = totalStudents;
+        $('#dashboard-active-students').textContent = activeStudents;
+        $('#dashboard-avg-coins').textContent = avgCoins.toLocaleString();
+        
+        // Load vocabulary count
+        try {
+            const db = firebaseAuthService.getFirestore();
+            const vocabSnapshot = await getDocs(collection(db, 'vocabularies'));
+            $('#dashboard-vocab-count').textContent = vocabSnapshot.size;
+        } catch (err) {
+            console.error('Error loading vocab count:', err);
+            $('#dashboard-vocab-count').textContent = '--';
+        }
+
+        // Load charts
+        this.renderDashboardCharts();
+        this.renderRecentActivity();
+    },
+    
+    populateDashboardGradeFilter() {
+        const gradeFilter = $('#dashboard-grade-filter');
+        if (!gradeFilter) return;
+        
+        // Get unique grades from student data (grade is in studentProfile.grade)
+        const grades = new Set();
+        this.allStudentData.forEach(student => {
+            const profile = student.studentProfile || {};
+            const grade = profile.grade || '';
+            if (grade) grades.add(grade);
+        });
+        
+        // Sort grades (handle both numeric and string grades)
+        const sortedGrades = Array.from(grades).sort((a, b) => {
+            const numA = parseInt(a);
+            const numB = parseInt(b);
+            if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+            return String(a).localeCompare(String(b));
+        });
+        
+        // Preserve current selection
+        const currentValue = gradeFilter.value;
+        
+        // Clear and rebuild options
+        gradeFilter.innerHTML = '<option value="">All Grades</option>';
+        sortedGrades.forEach(grade => {
+            const option = document.createElement('option');
+            option.value = grade;
+            option.textContent = `Grade ${grade}`;
+            gradeFilter.appendChild(option);
+        });
+        
+        // Restore selection if still valid
+        if (currentValue && sortedGrades.includes(currentValue)) {
+            gradeFilter.value = currentValue;
+        }
+    },
+    
+    getDashboardFilteredData() {
+        const gradeFilter = $('#dashboard-grade-filter');
+        const selectedGrade = gradeFilter?.value || '';
+        
+        if (!selectedGrade) {
+            return this.allStudentData;
+        }
+        
+        return this.allStudentData.filter(student => {
+            const profile = student.studentProfile || {};
+            const studentGrade = profile.grade || '';
+            return String(studentGrade) === String(selectedGrade);
+        });
+    },
+
+    renderDashboardCharts() {
+        // Activity Completion Chart
+        const activityCtx = document.getElementById('activity-chart')?.getContext('2d');
+        if (activityCtx && typeof Chart !== 'undefined') {
+            const activityData = this.calculateActivityCompletion();
+            if (this.activityChart) this.activityChart.destroy();
+            this.activityChart = new Chart(activityCtx, {
+                type: 'bar',
+                data: {
+                    labels: Object.keys(activityData),
+                    datasets: [{
+                        label: 'Completion Rate (%)',
+                        data: Object.values(activityData),
+                        backgroundColor: 'rgba(99, 102, 241, 0.6)',
+                        borderColor: 'rgba(99, 102, 241, 1)',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: 100,
+                            ticks: { color: '#cbd5f5' },
+                            grid: { color: 'rgba(255, 255, 255, 0.1)' }
+                        },
+                        x: {
+                            ticks: { color: '#cbd5f5' },
+                            grid: { color: 'rgba(255, 255, 255, 0.1)' }
+                        }
+                    },
+                    plugins: {
+                        legend: { labels: { color: '#cbd5f5' } }
+                    }
+                }
+            });
+        }
+
+        // Progress by Grade Chart
+        const gradeCtx = document.getElementById('grade-progress-chart')?.getContext('2d');
+        if (gradeCtx && typeof Chart !== 'undefined') {
+            const gradeData = this.calculateGradeProgress();
+            if (this.gradeChart) this.gradeChart.destroy();
+            this.gradeChart = new Chart(gradeCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: Object.keys(gradeData),
+                    datasets: [{
+                        data: Object.values(gradeData),
+                        backgroundColor: [
+                            'rgba(99, 102, 241, 0.6)',
+                            'rgba(16, 185, 129, 0.6)',
+                            'rgba(251, 191, 36, 0.6)',
+                            'rgba(239, 68, 68, 0.6)',
+                            'rgba(139, 92, 246, 0.6)'
+                        ]
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { labels: { color: '#cbd5f5' }, position: 'bottom' }
+                    }
+                }
+            });
+        }
+
+        // Coin Distribution Chart
+        const coinCtx = document.getElementById('coin-distribution-chart')?.getContext('2d');
+        if (coinCtx && typeof Chart !== 'undefined') {
+            const coinData = this.calculateCoinDistribution();
+            if (this.coinChart) this.coinChart.destroy();
+            this.coinChart = new Chart(coinCtx, {
+                type: 'line',
+                data: {
+                    labels: coinData.labels,
+                    datasets: [{
+                        label: 'Students',
+                        data: coinData.data,
+                        borderColor: 'rgba(99, 102, 241, 1)',
+                        backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: { color: '#cbd5f5' },
+                            grid: { color: 'rgba(255, 255, 255, 0.1)' }
+                        },
+                        x: {
+                            ticks: { color: '#cbd5f5' },
+                            grid: { color: 'rgba(255, 255, 255, 0.1)' }
+                        }
+                    },
+                    plugins: {
+                        legend: { labels: { color: '#cbd5f5' } }
+                    }
+                }
+            });
+        }
+
+        // Activity Usage Chart
+        const usageCtx = document.getElementById('activity-usage-chart')?.getContext('2d');
+        if (usageCtx && typeof Chart !== 'undefined') {
+            const usageData = this.calculateActivityUsage();
+            if (this.usageChart) this.usageChart.destroy();
+            this.usageChart = new Chart(usageCtx, {
+                type: 'pie',
+                data: {
+                    labels: Object.keys(usageData),
+                    datasets: [{
+                        data: Object.values(usageData),
+                        backgroundColor: [
+                            'rgba(99, 102, 241, 0.6)',
+                            'rgba(16, 185, 129, 0.6)',
+                            'rgba(251, 191, 36, 0.6)',
+                            'rgba(239, 68, 68, 0.6)',
+                            'rgba(139, 92, 246, 0.6)',
+                            'rgba(236, 72, 153, 0.6)'
+                        ]
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { labels: { color: '#cbd5f5' }, position: 'bottom' }
+                    }
+                }
+            });
+        }
+    },
+
+    calculateActivityCompletion() {
+        const filteredData = this.getDashboardFilteredData();
+        const activityLabels = {
+            matching: 'Matching',
+            flashcards: 'Flashcards',
+            quiz: 'Quiz',
+            hangman: 'Hangman',
+            fillInBlank: 'Fill in Blank',
+            wordSearch: 'Word Search',
+            crossword: 'Crossword'
+        };
+        const completion = {};
+        
+        Object.entries(activityLabels).forEach(([activityKey, activityLabel]) => {
+            let completed = 0;
+            let total = 0;
+            
+            filteredData.forEach(student => {
+                const units = student.units || {};
+                Object.values(units).forEach(unit => {
+                    // Scores are stored in unit.scores[activityKey]
+                    const scores = unit.scores || {};
+                    const activityData = scores[activityKey];
+                    if (activityData) {
+                        total++;
+                        if (activityData.completed || activityData.score > 0) {
+                            completed++;
+                        }
+                    }
+                });
+            });
+            
+            completion[activityLabel] = total > 0 ? Math.round((completed / total) * 100) : 0;
+        });
+        
+        console.log('Activity Completion Data:', completion);
+        return completion;
+    },
+
+    calculateGradeProgress() {
+        const filteredData = this.getDashboardFilteredData();
+        const gradeCounts = {};
+        filteredData.forEach(student => {
+            const grade = student.studentProfile?.grade || student.grade || 'Unknown';
+            gradeCounts[grade] = (gradeCounts[grade] || 0) + 1;
+        });
+        return gradeCounts;
+    },
+
+    calculateCoinDistribution() {
+        const filteredData = this.getDashboardFilteredData();
+        const ranges = [
+            { label: '0-100', min: 0, max: 100 },
+            { label: '101-500', min: 101, max: 500 },
+            { label: '501-1000', min: 501, max: 1000 },
+            { label: '1001-5000', min: 1001, max: 5000 },
+            { label: '5000+', min: 5001, max: Infinity }
+        ];
+        
+        const distribution = ranges.map(range => {
+            return filteredData.filter(student => {
+                const coins = student.coinData?.balance || student.coins || 0;
+                return coins >= range.min && coins <= range.max;
+            }).length;
+        });
+        
+        return {
+            labels: ranges.map(r => r.label),
+            data: distribution
+        };
+    },
+
+    calculateActivityUsage() {
+        const filteredData = this.getDashboardFilteredData();
+        const activityLabels = {
+            matching: 'Matching',
+            flashcards: 'Flashcards',
+            quiz: 'Quiz',
+            hangman: 'Hangman',
+            fillInBlank: 'Fill in Blank',
+            wordSearch: 'Word Search',
+            crossword: 'Crossword'
+        };
+        const usage = {};
+        
+        Object.values(activityLabels).forEach(label => {
+            usage[label] = 0;
+        });
+        
+        filteredData.forEach(student => {
+            const units = student.units || {};
+            Object.values(units).forEach(unit => {
+                // Scores are stored in unit.scores[activityKey]
+                const scores = unit.scores || {};
+                Object.entries(activityLabels).forEach(([activityKey, activityLabel]) => {
+                    const activityData = scores[activityKey];
+                    if (activityData && (activityData.completed || activityData.score > 0)) {
+                        usage[activityLabel] = (usage[activityLabel] || 0) + 1;
+                    }
+                });
+            });
+        });
+        
+        console.log('Activity Usage Data:', usage);
+        return usage;
+    },
+
+    renderRecentActivity() {
+        const filteredData = this.getDashboardFilteredData();
+        const table = $('#recent-activity-table');
+        if (!table) return;
+        
+        // Get recent vocabulary activity completions (not coin history)
+        const recentActivities = [];
+        const activityNames = {
+            matching: 'Matching',
+            flashcards: 'Flashcards',
+            quiz: 'Quiz',
+            hangman: 'Hangman',
+            fillInBlank: 'Fill in Blank',
+            wordSearch: 'Word Search',
+            crossword: 'Crossword',
+            scramble: 'Word Scramble',
+            speedMatch: 'Speed Match',
+            synonymAntonym: 'Synonym/Antonym',
+            illustration: 'Image Hunt'
+        };
+        
+        filteredData.forEach(student => {
+            const profile = student.studentProfile || {};
+            const studentName = profile.firstName && profile.lastName 
+                ? `${profile.firstName} ${profile.lastName}` 
+                : (profile.name || student.email || 'Unknown');
+            
+            const units = student.units || {};
+            Object.entries(units).forEach(([unitId, unitData]) => {
+                // Scores are stored in unitData.scores[activityKey]
+                const scores = unitData.scores || {};
+                Object.entries(activityNames).forEach(([activityKey, activityLabel]) => {
+                    const activityData = scores[activityKey];
+                    if (activityData && (activityData.completed || activityData.score > 0)) {
+                        const timestamp = activityData.completedAt || activityData.lastAttempt || activityData.timestamp || student.updatedAt;
+                        let date = null;
+                        if (timestamp) {
+                            // Handle Firestore timestamp or regular timestamp
+                            if (timestamp.toDate) {
+                                date = timestamp.toDate();
+                            } else if (timestamp.toMillis) {
+                                date = new Date(timestamp.toMillis());
+                            } else if (typeof timestamp === 'number') {
+                                date = new Date(timestamp);
+                            } else {
+                                date = new Date(timestamp);
+                            }
+                        }
+                        
+                        recentActivities.push({
+                            student: studentName,
+                            unit: unitId.replace(/_/g, ' '),
+                            activity: activityLabel,
+                            score: activityData.score !== undefined ? `${activityData.score}%` : (activityData.completed ? '✓' : '-'),
+                            date: date,
+                            dateStr: date && !isNaN(date) ? date.toLocaleDateString() : '-'
+                        });
+                    }
+                });
+            });
+        });
+        
+        // Sort by date (most recent first)
+        recentActivities.sort((a, b) => {
+            if (!a.date) return 1;
+            if (!b.date) return -1;
+            return b.date - a.date;
+        });
+        recentActivities.splice(30); // Keep only 30 most recent
+        
+        if (recentActivities.length === 0) {
+            table.innerHTML = '<p style="color: var(--text-muted); text-align: center; padding: 2rem;">No vocabulary activity completed yet</p>';
+            return;
+        }
+        
+        table.innerHTML = `
+            <table style="width: 100%; border-collapse: collapse;">
+                <thead>
+                    <tr style="border-bottom: 1px solid var(--border-color);">
+                        <th style="padding: 0.75rem; text-align: left; color: var(--text-muted);">Student</th>
+                        <th style="padding: 0.75rem; text-align: left; color: var(--text-muted);">Vocabulary</th>
+                        <th style="padding: 0.75rem; text-align: left; color: var(--text-muted);">Activity</th>
+                        <th style="padding: 0.75rem; text-align: right; color: var(--text-muted);">Score</th>
+                        <th style="padding: 0.75rem; text-align: right; color: var(--text-muted);">Date</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${recentActivities.map(activity => `
+                        <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.05);">
+                            <td style="padding: 0.75rem;">${activity.student}</td>
+                            <td style="padding: 0.75rem; color: var(--text-muted); font-size: 0.9rem;">${activity.unit}</td>
+                            <td style="padding: 0.75rem;">${activity.activity}</td>
+                            <td style="padding: 0.75rem; text-align: right; color: var(--primary-color);">${activity.score}</td>
+                            <td style="padding: 0.75rem; text-align: right; color: var(--text-muted);">${activity.dateStr}</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        `;
+    },
+
+    async loadJSONFile(file) {
+        // Hide previous errors
+        const errorDiv = $('#file-error');
+        if (errorDiv) errorDiv.style.display = 'none';
+
+        // Show loading
+        notifications.info('Loading file...');
+
+        try {
+            const text = await file.text();
+            const data = JSON.parse(text);
+
+            // Validate structure
+            this.validateJSONStructure(data);
+
+            // Store loaded data
+            this.loadedData = this.processLoadedData(data);
+
+            // Show file info
+            this.showFileInfo(file);
+
+            // Render summary and tables
+            this.renderViewerSummary();
+            this.renderViewerTables();
+
+            notifications.success('File loaded successfully!');
+        } catch (error) {
+            console.error('Error loading JSON file:', error);
+            this.showFileError(error.message || 'Failed to load file. Please check the file format.');
+            notifications.error('Failed to load file. Please check the file format.');
+        }
+    },
+
+    validateJSONStructure(data) {
+        if (!data) {
+            throw new Error('File is empty or invalid JSON');
+        }
+
+        if (!data.studentProgress && !data.scores && !data.userRoles) {
+            throw new Error('Invalid export format: file must contain studentProgress, scores, or userRoles');
+        }
+
+        if (data.studentProgress && !Array.isArray(data.studentProgress)) {
+            throw new Error('Invalid format: studentProgress must be an array');
+        }
+
+        if (data.scores && !Array.isArray(data.scores)) {
+            throw new Error('Invalid format: scores must be an array');
+        }
+    },
+
+    processLoadedData(data) {
+        return {
+            students: data.studentProgress || [],
+            scores: data.scores || [],
+            roles: data.userRoles || [],
+            metadata: data.metadata || {},
+            summary: this.calculateViewerSummary(data)
+        };
+    },
+
+    calculateViewerSummary(data) {
+        const students = data.studentProgress || [];
+        let totalVocabUnits = 0;
+        let totalCoins = 0;
+        let dateRange = { start: null, end: null };
+
+        students.forEach(student => {
+            if (student.units) {
+                totalVocabUnits += Object.keys(student.units).length;
+            }
+            if (student.coinData) {
+                totalCoins += student.coinData.balance || 0;
+            }
+            if (student.updatedAt) {
+                const date = student.updatedAt.toDate ? student.updatedAt.toDate() : new Date(student.updatedAt.seconds * 1000);
+                if (!dateRange.start || date < dateRange.start) {
+                    dateRange.start = date;
+                }
+                if (!dateRange.end || date > dateRange.end) {
+                    dateRange.end = date;
+                }
+            }
+        });
+
+        return {
+            totalStudents: students.length,
+            totalProgressRecords: students.length,
+            totalVocabUnits,
+            totalCoins,
+            totalScores: (data.scores || []).length,
+            dateRange
+        };
+    },
+
+    showFileInfo(file) {
+        const fileInfo = $('#file-info');
+        const fileName = $('#file-name');
+        const fileSize = $('#file-size');
+
+        if (fileInfo && fileName && fileSize) {
+            fileName.textContent = file.name;
+            fileSize.textContent = `Size: ${(file.size / 1024).toFixed(2)} KB`;
+            fileInfo.style.display = 'block';
+        }
+    },
+
+    showFileError(message) {
+        const errorDiv = $('#file-error');
+        const errorMessage = $('#error-message');
+
+        if (errorDiv && errorMessage) {
+            errorMessage.textContent = message;
+            errorDiv.style.display = 'block';
+        }
+    },
+
+    clearLoadedData() {
+        this.loadedData = null;
+        const fileInput = $('#load-json-file');
+        if (fileInput) fileInput.value = '';
+
+        $('#file-info').style.display = 'none';
+        $('#file-error').style.display = 'none';
+        $('#viewer-summary').style.display = 'none';
+        $('#viewer-tables').style.display = 'none';
+    },
+
+    renderViewerSummary() {
+        if (!this.loadedData) return;
+
+        const summary = this.loadedData.summary;
+        const dateRange = summary.dateRange;
+        const dateStr = dateRange.start && dateRange.end
+            ? `${dateRange.start.toLocaleDateString()} to ${dateRange.end.toLocaleDateString()}`
+            : 'N/A';
+
+        const summaryEl = $('#viewer-summary-stats');
+        if (!summaryEl) return;
+
+        summaryEl.innerHTML = `
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; padding: 1rem; background: rgba(15, 23, 42, 0.4); border-radius: 8px; border: 1px solid var(--border-color, rgba(255, 255, 255, 0.125));">
+                <div>
+                    <div style="font-size: 0.8rem; color: var(--text-muted, #cbd5f5);">Total Students</div>
+                    <div style="font-size: 1.5rem; font-weight: 600; color: var(--text-main, #f8fafc);">${summary.totalStudents}</div>
+                </div>
+                ${summary.totalProgressRecords > 0 ? `
+                <div>
+                    <div style="font-size: 0.8rem; color: var(--text-muted, #cbd5f5);">Progress Records</div>
+                    <div style="font-size: 1.5rem; font-weight: 600; color: var(--text-main, #f8fafc);">${summary.totalProgressRecords}</div>
+                </div>
+                ${summary.totalVocabUnits > 0 ? `
+                <div>
+                    <div style="font-size: 0.8rem; color: var(--text-muted, #cbd5f5);">Vocabulary Units</div>
+                    <div style="font-size: 1.5rem; font-weight: 600; color: var(--text-main, #f8fafc);">${summary.totalVocabUnits}</div>
+                </div>
+                ` : ''}
+                <div>
+                    <div style="font-size: 0.8rem; color: var(--text-muted, #cbd5f5);">Total Coins</div>
+                    <div style="font-size: 1.5rem; font-weight: 600; color: var(--text-main, #f8fafc);">${summary.totalCoins.toLocaleString()}</div>
+                </div>
+                ` : ''}
+                ${summary.totalScores > 0 ? `
+                <div>
+                    <div style="font-size: 0.8rem; color: var(--text-muted, #cbd5f5);">Game Scores</div>
+                    <div style="font-size: 1.5rem; font-weight: 600; color: var(--text-main, #f8fafc);">${summary.totalScores}</div>
+                </div>
+                ` : ''}
+                <div>
+                    <div style="font-size: 0.8rem; color: var(--text-muted, #cbd5f5);">Date Range</div>
+                    <div style="font-size: 0.9rem; font-weight: 600; color: var(--text-main, #f8fafc);">${dateStr}</div>
+                </div>
+            </div>
+        `;
+
+        $('#viewer-summary').style.display = 'block';
+    },
+
+    renderViewerTables() {
+        if (!this.loadedData || !this.loadedData.students.length) return;
+
+        const tablesContent = $('#viewer-tables-content');
+        if (!tablesContent) return;
+
+        let html = '';
+
+        // Student Progress Table
+        if (this.loadedData.students.length > 0) {
+            html += `
+                <h5 style="margin: 0 0 1rem 0; font-size: 1.1rem; font-weight: 600; color: var(--text-main, #f8fafc);">Student Progress (${this.loadedData.students.length} records)</h5>
+                <table style="width: 100%; border-collapse: collapse; margin-bottom: 1.5rem;">
+                    <thead>
+                        <tr style="border-bottom: 2px solid var(--border-color, rgba(255, 255, 255, 0.125));">
+                            <th style="padding: 0.75rem; text-align: left; color: var(--text-main, #f8fafc);">Student ID</th>
+                            <th style="padding: 0.75rem; text-align: left; color: var(--text-main, #f8fafc);">Name</th>
+                            <th style="padding: 0.75rem; text-align: left; color: var(--text-main, #f8fafc);">Grade</th>
+                            <th style="padding: 0.75rem; text-align: right; color: var(--text-main, #f8fafc);">Coins</th>
+                            <th style="padding: 0.75rem; text-align: left; color: var(--text-main, #f8fafc);">Vocab Units</th>
+                            <th style="padding: 0.75rem; text-align: left; color: var(--text-main, #f8fafc);">Last Active</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${this.loadedData.students.map(item => {
+                            const profile = item.studentProfile || {};
+                            const name = profile.firstName && profile.lastName
+                                ? `${profile.firstName} ${profile.lastName}`
+                                : (profile.name || 'Unknown');
+                            const coins = (item.coinData || {}).balance || 0;
+                            const vocabUnits = item.units ? Object.keys(item.units).length : 0;
+                            const lastActive = item.updatedAt
+                                ? (item.updatedAt.toDate ? item.updatedAt.toDate() : new Date(item.updatedAt.seconds * 1000)).toLocaleDateString()
+                                : '-';
+                            return `
+                                <tr style="border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.125));">
+                                    <td style="padding: 0.75rem; color: var(--text-main, #f8fafc);">${item.studentId}</td>
+                                    <td style="padding: 0.75rem; color: var(--text-main, #f8fafc);">${name}</td>
+                                    <td style="padding: 0.75rem; color: var(--text-main, #f8fafc);">${profile.grade || '-'}</td>
+                                    <td style="padding: 0.75rem; text-align: right; color: var(--text-main, #f8fafc);">${coins}</td>
+                                    <td style="padding: 0.75rem; color: var(--text-main, #f8fafc);">${vocabUnits}</td>
+                                    <td style="padding: 0.75rem; color: var(--text-main, #f8fafc);">${lastActive}</td>
+                                </tr>
+                            `;
+                        }).join('')}
+                    </tbody>
+                </table>
+            `;
+        }
+
+        // Game Scores Table
+        if (this.loadedData.scores.length > 0) {
+            html += `
+                <h5 style="margin: 1.5rem 0 1rem 0; font-size: 1.1rem; font-weight: 600; color: var(--text-main, #f8fafc);">Game Scores (${this.loadedData.scores.length} records)</h5>
+                <table style="width: 100%; border-collapse: collapse;">
+                    <thead>
+                        <tr style="border-bottom: 2px solid var(--border-color, rgba(255, 255, 255, 0.125));">
+                            <th style="padding: 0.75rem; text-align: left; color: var(--text-main, #f8fafc);">Student</th>
+                            <th style="padding: 0.75rem; text-align: left; color: var(--text-main, #f8fafc);">Game</th>
+                            <th style="padding: 0.75rem; text-align: right; color: var(--text-main, #f8fafc);">Score</th>
+                            <th style="padding: 0.75rem; text-align: left; color: var(--text-main, #f8fafc);">Date</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${this.loadedData.scores.slice(0, 50).map(item => {
+                            const date = item.timestamp
+                                ? (item.timestamp.toDate ? item.timestamp.toDate() : new Date(item.timestamp.seconds * 1000)).toLocaleDateString()
+                                : '-';
+                            return `
+                                <tr style="border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.125));">
+                                    <td style="padding: 0.75rem; color: var(--text-main, #f8fafc);">${item.name || item.userId}</td>
+                                    <td style="padding: 0.75rem; color: var(--text-main, #f8fafc);">${item.gameId || '-'}</td>
+                                    <td style="padding: 0.75rem; text-align: right; color: var(--text-main, #f8fafc);">${(item.score || 0).toLocaleString()}</td>
+                                    <td style="padding: 0.75rem; color: var(--text-main, #f8fafc);">${date}</td>
+                                </tr>
+                            `;
+                        }).join('')}
+                        ${this.loadedData.scores.length > 50 ? `
+                            <tr>
+                                <td colspan="4" style="padding: 0.75rem; text-align: center; color: var(--text-muted, #cbd5f5);">
+                                    ... and ${this.loadedData.scores.length - 50} more records
+                                </td>
+                            </tr>
+                        ` : ''}
+                    </tbody>
+                </table>
+            `;
+        }
+
+        tablesContent.innerHTML = html || '<p style="color: var(--text-muted, #cbd5f5);">No data to display.</p>';
+        $('#viewer-tables').style.display = 'block';
+    }
+});
 
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', startTeacherApp);

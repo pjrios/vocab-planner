@@ -22,6 +22,7 @@ import {
 export class StudentGames {
     constructor(studentManager) {
         this.sm = studentManager; // Reference to StudentManager instance
+        this.globalSettings = null; // Cache for global gamification settings
     }
 
     formatTime(seconds) {
@@ -33,12 +34,48 @@ export class StudentGames {
         }
         return `${secs}s`;
     }
+    
+    async loadGlobalSettings() {
+        // Return cached settings if available
+        if (this.globalSettings) return this.globalSettings;
+        
+        try {
+            const db = firebaseAuthService.getFirestore();
+            const settingsRef = doc(db, 'appSettings', 'gamification');
+            const settingsSnap = await getDoc(settingsRef);
+            
+            if (settingsSnap.exists()) {
+                this.globalSettings = settingsSnap.data();
+            } else {
+                // Default settings if none exist
+                this.globalSettings = {
+                    exchangeRate: 10,
+                    completionBonus: 50,
+                    progressReward: 1
+                };
+            }
+        } catch (error) {
+            console.error('Error loading global gamification settings:', error);
+            // Fallback to defaults
+            this.globalSettings = {
+                exchangeRate: 10,
+                completionBonus: 50,
+                progressReward: 1
+            };
+        }
+        
+        return this.globalSettings;
+    }
+    
+    getExchangeRate() {
+        // Return cached value or default
+        return this.globalSettings?.exchangeRate || 10;
+    }
 
-    updateArcadeUI() {
-        // Use default settings if no vocab selected (or maybe fetch global settings later)
-        // For now, fallback to defaults if accessed from Main Menu without a vocab context
-        const settings = (this.sm.currentVocab && this.sm.currentVocab.activitySettings) ? this.sm.currentVocab.activitySettings : {};
-        const exchangeRate = settings.exchangeRate !== undefined ? settings.exchangeRate : 10;
+    async updateArcadeUI() {
+        // Load global settings
+        await this.loadGlobalSettings();
+        const exchangeRate = this.getExchangeRate();
 
         const costEl = $('#galactic-breaker-cost');
         if (costEl) costEl.textContent = `${exchangeRate} Coins / min`;
@@ -47,15 +84,21 @@ export class StudentGames {
         if (addTimeBtn) addTimeBtn.textContent = `+1 Min (${exchangeRate} Coins)`;
     }
 
-    updateGameSelectionUI() {
+    async updateGameSelectionUI() {
         const game = this.sm.gamesList[this.sm.currentGameIndex];
         const container = $('#current-game-card');
         if (!container) return;
 
-        const settings = (this.sm.currentVocab && this.sm.currentVocab.activitySettings) ? this.sm.currentVocab.activitySettings : {};
-        const exchangeRate = settings.exchangeRate !== undefined ? settings.exchangeRate : 10;
+        // Load global settings
+        await this.loadGlobalSettings();
+        const exchangeRate = this.getExchangeRate();
+        
+        // Game counter (e.g., "3/20")
+        const currentNum = this.sm.currentGameIndex + 1;
+        const totalGames = this.sm.gamesList.length;
 
         container.innerHTML = `
+            <div class="game-counter" style="text-align: center; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem;">${currentNum} / ${totalGames}</div>
             <div class="game-icon" style="font-size: 4rem; text-align: center; margin: 1rem 0;">${game.icon}</div>
             <h3 style="text-align: center;">${game.name}</h3>
             <p style="text-align: center; color: var(--text-muted);">${game.desc}</p>
@@ -375,13 +418,40 @@ export class StudentGames {
         iframe.style.borderRadius = '8px';
         iframe.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1)';
         iframe.style.margin = '0 auto'; // Center the iframe
+        iframe.tabIndex = 0; // Make iframe focusable
         
         // Insert iframe after the canvas
         canvas.parentNode.insertBefore(iframe, canvas.nextSibling);
         
+        // Focus iframe when clicked
+        iframe.addEventListener('mouseenter', () => {
+            iframe.focus();
+        });
+        
+        iframe.addEventListener('click', () => {
+            iframe.focus();
+            try {
+                if (iframe.contentWindow) {
+                    iframe.contentWindow.focus();
+                }
+            } catch (e) {}
+        });
+        
         // Set up iframe onload handler for optimizations and score reporting
         const originalOnload = iframe.onload;
         iframe.onload = () => {
+            // Focus the iframe so keyboard events work
+            iframe.focus();
+            
+            // Also try to focus the iframe's content window
+            try {
+                if (iframe.contentWindow) {
+                    iframe.contentWindow.focus();
+                }
+            } catch (e) {
+                // Cross-origin restrictions may prevent this
+                console.log('Could not focus iframe content window');
+            }
             try {
                 const iframeWindow = iframe.contentWindow;
                 const iframeDoc = iframe.contentDocument || iframeWindow.document;
@@ -717,9 +787,9 @@ export class StudentGames {
     }
 
     async startGame(type) {
-        // Use default settings if no vocab selected (accessed from Main Menu)
-        const settings = (this.sm.currentVocab && this.sm.currentVocab.activitySettings) ? this.sm.currentVocab.activitySettings : {};
-        const exchangeRate = settings.exchangeRate !== undefined ? settings.exchangeRate : 10;
+        // Use global gamification settings
+        await this.loadGlobalSettings();
+        const exchangeRate = this.getExchangeRate();
 
         if (this.sm.coins < exchangeRate) {
             notifications.warning(`You need at least ${exchangeRate} coins to play!`);
@@ -738,6 +808,16 @@ export class StudentGames {
             gameStage.style.justifyContent = 'center';
             gameStage.style.width = '100%';
             gameStage.style.minWidth = '80%'; // Prevent container from becoming too narrow
+            
+            // Prevent arrow keys from scrolling the page during gameplay
+            if (!this.arrowKeyHandler) {
+                this.arrowKeyHandler = (e) => {
+                    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) {
+                        e.preventDefault();
+                    }
+                };
+            }
+            window.addEventListener('keydown', this.arrowKeyHandler);
 
             this.sm.gameTimeRemaining = 60;
             this.updateGameTimer();
@@ -956,6 +1036,11 @@ export class StudentGames {
             }
             this.sm.currentGame = null;
             this.sm.currentGameScore = 0;
+        }
+        
+        // Remove arrow key prevention handler
+        if (this.arrowKeyHandler) {
+            window.removeEventListener('keydown', this.arrowKeyHandler);
         }
         
         // Clean up any remaining iframes (fallback cleanup)

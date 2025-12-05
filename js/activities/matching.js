@@ -190,9 +190,53 @@ export class MatchingActivity {
             this.saveState();
 
             if (this.completedIds.size === this.words.length) {
-                setTimeout(() => alert('All matched! Great job!'), 300);
+                setTimeout(() => this.showCompletionScreen(), 300);
             }
         }, 450);
+    }
+    
+    showCompletionScreen() {
+        this.container.innerHTML = `
+            <div class="completion-screen" style="text-align: center; padding: 2rem;">
+                <h2>🎉 All Matched!</h2>
+                <p>Great job! You matched all ${this.words.length} pairs!</p>
+                <p style="color: var(--text-muted);">Accuracy: ${this.getScore().score}% (${this.attempts} attempts)</p>
+                <button id="replay-matching" class="btn primary-btn" style="margin-top: 1rem;">🔄 Play Again</button>
+            </div>
+        `;
+        
+        const replayBtn = this.container.querySelector('#replay-matching');
+        if (replayBtn) {
+            replayBtn.addEventListener('click', () => this.restart());
+        }
+    }
+    
+    restart() {
+        // Clear saved state
+        const key = `matching_state_${this.words[0].word}_${this.words.length}`;
+        localStorage.removeItem(key);
+        
+        // Reset game state
+        this.completedIds = new Set();
+        this.attempts = 0;
+        this.cards = [];
+        this.firstCard = null;
+        this.secondCard = null;
+        this.lockBoard = false;
+        
+        // Regenerate and shuffle cards
+        this.words.forEach((w, i) => {
+            this.cards.push({ type: 'word', content: w.word, id: i });
+            this.cards.push({ type: 'def', content: w.definition, id: i });
+        });
+        this.cards.sort(() => Math.random() - 0.5);
+        
+        // Notify progress system of new session
+        if (this.onProgress) {
+            this.onProgress({ score: 0, details: 'No attempts made', isComplete: false, isReplay: true });
+        }
+        
+        this.render();
     }
 
     unflipCards() {

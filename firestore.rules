@@ -8,8 +8,13 @@ service cloud.firestore {
     function isAllowlistedTeacher() {
       return request.auth != null && request.auth.token.email in ['rosjavier9@gmail.com'];
     }
+    function hasTeacherRole() {
+      return request.auth != null && 
+             exists(/databases/$(database)/documents/userRoles/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/userRoles/$(request.auth.uid)).data.role == 'teacher';
+    }
     function isTeacher() {
-      return isTeacherUid() || isAllowlistedTeacher();
+      return isTeacherUid() || isAllowlistedTeacher() || hasTeacherRole();
     }
     
     // Vocabularies Collection

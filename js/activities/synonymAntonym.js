@@ -193,22 +193,33 @@ export class SynonymAntonymActivity {
         const result = this.getScore();
 
         summary.innerHTML = `
-            <h2>Challenge Complete!</h2>
+            <h2>🎉 Challenge Complete!</h2>
             <div style="font-size: 4rem; font-weight: bold; color: var(--primary); margin: 2rem 0;">
                 ${result.score}%
             </div>
             <p style="font-size: 1.5rem; margin-bottom: 2rem;">${result.details}</p>
-            <button id="restart-quiz" class="btn primary-btn">Try Again</button>
+            <button id="restart-quiz" class="btn primary-btn">🔄 Play Again</button>
         `;
 
         this.container.appendChild(summary);
 
-        $('#restart-quiz').addEventListener('click', () => {
-            this.currentIndex = 0;
-            this.score = 0;
-            this.isFinished = false;
-            this.questions = this.shuffle(this.questions); // Reshuffle
-            this.render();
-        });
+        $('#restart-quiz').addEventListener('click', () => this.restart());
+    }
+    
+    restart() {
+        // Reset game state
+        this.currentIndex = 0;
+        this.score = 0;
+        this.isFinished = false;
+        
+        // Regenerate questions with new shuffle
+        this.questions = this.generateQuestions();
+        
+        // Notify progress system of new session
+        if (this.onProgress) {
+            this.onProgress({ score: 0, details: 'Correct: 0/0', isComplete: false, isReplay: true });
+        }
+        
+        this.render();
     }
 }

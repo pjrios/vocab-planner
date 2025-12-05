@@ -15,9 +15,23 @@ export class StudentAuth {
     async initFirebaseAuth() {
         try {
             await firebaseAuthService.init();
+            
+            // Check for redirect result (when using signInWithRedirect)
+            // This must be called before onAuthStateChanged
+            const redirectResult = await firebaseAuthService.handleRedirectResult();
+            let redirectProcessed = false;
+            if (redirectResult?.user) {
+                console.log('Processing redirect sign-in result...');
+                await this.handleFirebaseSignIn(redirectResult.user);
+                redirectProcessed = true;
+            }
+            
             firebaseAuthService.onAuthStateChanged(async (user) => {
                 if (user) {
-                    await this.handleFirebaseSignIn(user);
+                    // Only handle if we didn't already process redirect result
+                    if (!redirectProcessed || !redirectResult?.user || redirectResult.user.uid !== user.uid) {
+                        await this.handleFirebaseSignIn(user);
+                    }
                 } else {
                     this.handleFirebaseSignOut();
                 }

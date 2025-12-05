@@ -227,16 +227,24 @@ export class SpeedMatchActivity {
 
         this.saveState(); // Save high score
 
+        const isNewHighScore = this.score > 0 && this.score >= this.highScore;
+        
         this.container.innerHTML = `
             <div class="completion-screen">
-                <h2>Game Over!</h2>
+                <h2>${isNewHighScore ? '🏆 New High Score!' : 'Game Over!'}</h2>
                 <p>Final Score: ${this.score}</p>
                 <p>High Score: ${this.highScore}</p>
-                <button id="restart-speed-match" class="btn primary-btn">Play Again</button>
+                <button id="restart-speed-match" class="btn primary-btn">🔄 Play Again</button>
             </div>
         `;
 
-        $('#restart-speed-match').addEventListener('click', () => this.startGame());
+        $('#restart-speed-match').addEventListener('click', () => {
+            // Notify progress system of new session
+            if (this.onProgress) {
+                this.onProgress({ score: 0, details: 'Score: 0', isComplete: false, isReplay: true });
+            }
+            this.startGame();
+        });
 
         if (this.onProgress) {
             this.onProgress(this.getScore());

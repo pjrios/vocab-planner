@@ -82,11 +82,18 @@ export class FillInBlankActivity {
     startRound() {
         if (this.currentIndex >= this.words.length) {
             this.container.innerHTML = `
-    < div class="completion-screen" >
-                    <h2>All Words Completed!</h2>
-                    <p>Final Score: ${this.score}%</p>
-                </div >
-    `;
+                <div class="completion-screen">
+                    <h2>🎉 All Words Completed!</h2>
+                    <p>You completed ${this.words.length} words!</p>
+                    <button id="replay-fib" class="btn primary-btn" style="margin-top: 1rem;">🔄 Play Again</button>
+                </div>
+            `;
+            
+            // Add replay button listener
+            const replayBtn = this.container.querySelector('#replay-fib');
+            if (replayBtn) {
+                replayBtn.addEventListener('click', () => this.restart());
+            }
             return;
         }
 
@@ -146,6 +153,30 @@ export class FillInBlankActivity {
         if (this.onProgress) {
             this.onProgress(this.getScore());
         }
+    }
+
+    restart() {
+        // Clear saved state
+        const key = `fib_state_${this.words.length}`;
+        localStorage.removeItem(key);
+        localStorage.removeItem(key.trim());
+        
+        // Reset game state
+        this.currentIndex = 0;
+        this.score = 0;
+        this.currentWord = null;
+        this.attempts = 0;
+        
+        // Reshuffle words for variety
+        this.words.sort(() => Math.random() - 0.5);
+        
+        // Notify progress system of new session
+        if (this.onProgress) {
+            this.onProgress({ score: 0, details: '0/0 words completed', isComplete: false, isReplay: true });
+        }
+        
+        this.startRound();
+        this.saveState();
     }
 
     render() {

@@ -619,25 +619,28 @@ export class SpaceInvaders {
         this.ctx.fillText(`WAVE: ${this.wave}`, this.width / 2 - 80, 35);
         this.ctx.shadowBlur = 0;
 
-        // Lives
-        this.ctx.fillText(`LIVES:`, this.width - 180, 35);
-        const maxDisplayLives = Math.min(this.lives, 5);
+        // Lives - display up to 3 ship icons, then show number for extras
+        const maxDisplayLives = Math.min(this.lives, 3);
+        const livesStartX = this.width - 140;
+        
+        this.ctx.fillText(`LIVES:`, this.width - 220, 35);
+        
         for (let i = 0; i < maxDisplayLives; i++) {
             this.ctx.fillStyle = '#4ecdc4';
-            const lx = this.width - 100 + i * 30;
+            const lx = livesStartX + i * 25;
             this.ctx.beginPath();
-            this.ctx.moveTo(lx + 12, 20);
+            this.ctx.moveTo(lx + 10, 20);
             this.ctx.lineTo(lx, 35);
-            this.ctx.lineTo(lx + 24, 35);
+            this.ctx.lineTo(lx + 20, 35);
             this.ctx.closePath();
             this.ctx.fill();
         }
 
-        // Show +X if more than 5 lives
-        if (this.lives > 5) {
+        // Show +X if more than 3 lives
+        if (this.lives > 3) {
             this.ctx.fillStyle = '#4ecdc4';
-            this.ctx.font = 'bold 18px "Courier New", monospace';
-            this.ctx.fillText(`+${this.lives - 5}`, this.width - 100 + maxDisplayLives * 30, 32);
+            this.ctx.font = 'bold 16px "Courier New", monospace';
+            this.ctx.fillText(`+${this.lives - 3}`, livesStartX + maxDisplayLives * 25 + 5, 32);
         }
     }
 

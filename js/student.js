@@ -415,8 +415,9 @@ class StudentManager {
 
 
         this.addListener('#add-time-btn', 'click', async () => {
-            const settings = (this.currentVocab && this.currentVocab.activitySettings) ? this.currentVocab.activitySettings : {};
-            const exchangeRate = settings.exchangeRate !== undefined ? settings.exchangeRate : 10;
+            // Use global gamification settings
+            await this.games.loadGlobalSettings();
+            const exchangeRate = this.games.getExchangeRate();
             const extensionSeconds = 60;
 
             if (await this.progress.deductCoins(exchangeRate)) {
@@ -456,22 +457,59 @@ class StudentManager {
         // Google Sign-In (Firebase)
         const loginBtn = $('#google-login-btn');
         if (loginBtn) {
-            loginBtn.addEventListener('click', async () => {
+            loginBtn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                console.log('Login button clicked!');
                 const originalText = loginBtn.innerHTML;
                 loginBtn.innerHTML = '⏳ Signing in...';
                 loginBtn.disabled = true;
                 this.auth.showLoginError('');
 
                 try {
-                    await firebaseAuthService.signInWithGoogle();
-                } catch (e) {
-                    console.error('Sign in error:', e);
-                    this.showLoginError('Sign-in failed. Please try again.');
-                } finally {
+                    console.log('Calling signInWithGoogle...');
+                    const result = await firebaseAuthService.signInWithGoogle();
+                    console.log('signInWithGoogle returned:', result);
+                    
+                    // If using redirect, the page will navigate away, so don't reset button
+                    if (result) {
+                        // Popup succeeded, reset button after delay
                     setTimeout(() => {
                         loginBtn.innerHTML = originalText;
                         loginBtn.disabled = false;
                     }, 1200);
+                    } else {
+                        console.log('Redirect mode - page should navigate away');
+                        // For redirect, show a message
+                        loginBtn.innerHTML = '⏳ Redirecting to Google...';
+                    }
+                } catch (e) {
+                    console.error('Sign in error:', e);
+                    console.error('Error details:', {
+                        code: e.code,
+                        message: e.message,
+                        stack: e.stack
+                    });
+                    
+                    let errorMessage = 'Sign-in failed. Please try again.';
+                    
+                    if (e.message === 'ELECTRON_NO_POPUP' || e.message === 'POPUP_BLOCKED_MANUAL_AUTH' || 
+                        e.code === 'auth/cancelled-popup-request' || e.code === 'auth/popup-blocked') {
+                        // Electron/Cursor doesn't support popups - show helpful message
+                        this.showElectronAuthMessage(loginBtn);
+                        loginBtn.innerHTML = originalText;
+                        loginBtn.disabled = false;
+                        return;
+                    } else if (e.code === 'auth/network-request-failed') {
+                        errorMessage = 'Network error. Please check your connection.';
+                    } else if (e.message) {
+                        errorMessage = `Sign-in failed: ${e.message}`;
+                    }
+                    
+                    this.showLoginError(errorMessage);
+                    loginBtn.innerHTML = originalText;
+                    loginBtn.disabled = false;
                 }
             });
         } else {
@@ -632,6 +670,99 @@ class StudentManager {
                 errorEl.style.display = 'none';
             }
         }
+    }
+
+    showElectronAuthMessage(loginBtn) {
+        // Hide the regular login button
+        if (loginBtn) {
+            loginBtn.style.display = 'none';
+        }
+        
+        // Check if message already exists
+        let electronMsg = $('#electron-auth-message');
+        if (electronMsg) {
+            electronMsg.style.display = 'block';
+            return;
+        }
+        
+        // Create a helpful message for Electron/Cursor users
+        electronMsg = document.createElement('div');
+        electronMsg.id = 'electron-auth-message';
+        electronMsg.style.cssText = `
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(139, 92, 246, 0.15));
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin: 1rem 0;
+            text-align: center;
+            max-width: 400px;
+        `;
+        
+        // Get the current URL (works for both localhost and deployed)
+        const deployedUrl = window.location.href.split('?')[0]; // Remove query params if any
+        
+        electronMsg.innerHTML = `
+            <div style="font-size: 2rem; margin-bottom: 0.5rem;">🌐</div>
+            <h3 style="margin: 0 0 0.75rem 0; color: var(--text-main, #f8fafc);">Sign In via Browser</h3>
+            <p style="margin: 0 0 1rem 0; color: var(--text-muted, #94a3b8); font-size: 0.9rem; line-height: 1.5;">
+                Google Sign-In doesn't work in the Cursor browser. Please use one of these options:
+            </p>
+            <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+                <a href="${deployedUrl}" target="_blank" 
+                   style="display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; 
+                          background: var(--primary-color, #6366f1); color: white; padding: 0.75rem 1.5rem; 
+                          border-radius: 8px; text-decoration: none; font-weight: 600; transition: all 0.2s;">
+                    🔗 Open in Browser
+                </a>
+                <button id="copy-url-btn" 
+                        style="display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
+                               background: transparent; border: 1px solid var(--border-color, rgba(255,255,255,0.2)); 
+                               color: var(--text-main, #f8fafc); padding: 0.75rem 1.5rem; border-radius: 8px; 
+                               cursor: pointer; font-weight: 500; transition: all 0.2s;">
+                    📋 Copy URL
+                </button>
+            </div>
+            <p style="margin: 1rem 0 0 0; color: var(--text-muted, #94a3b8); font-size: 0.8rem;">
+                Or continue as guest below
+            </p>
+        `;
+        
+        // Insert after login button's parent
+        const loginSection = loginBtn?.closest('.login-section') || loginBtn?.parentNode;
+        if (loginSection) {
+            loginSection.appendChild(electronMsg);
+        }
+        
+        // Add copy URL functionality
+        setTimeout(() => {
+            const copyBtn = $('#copy-url-btn');
+            if (copyBtn) {
+                copyBtn.addEventListener('click', async () => {
+                    try {
+                        await navigator.clipboard.writeText(deployedUrl);
+                        copyBtn.innerHTML = '✅ Copied!';
+                        setTimeout(() => {
+                            copyBtn.innerHTML = '📋 Copy URL';
+                        }, 2000);
+                    } catch (err) {
+                        // Fallback for older browsers
+                        const textArea = document.createElement('textarea');
+                        textArea.value = deployedUrl;
+                        document.body.appendChild(textArea);
+                        textArea.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(textArea);
+                        copyBtn.innerHTML = '✅ Copied!';
+                        setTimeout(() => {
+                            copyBtn.innerHTML = '📋 Copy URL';
+                        }, 2000);
+                    }
+                });
+            }
+        }, 0);
+        
+        // Clear any error message
+        this.showLoginError('');
     }
 
     // DEPRECATED: Use this.activities.startActivity() instead

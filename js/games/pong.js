@@ -9,24 +9,91 @@ export class Pong {
         // Game Objects
         this.paddleWidth = 15;
         this.paddleHeight = 100;
-        this.paddle1 = { x: 20, y: this.height / 2 - 50, width: this.paddleWidth, height: this.paddleHeight, color: '#0ff', score: 0, dy: 0 };
-        this.paddle2 = { x: this.width - 35, y: this.height / 2 - 50, width: this.paddleWidth, height: this.paddleHeight, color: '#f0f', score: 0, dy: 0 };
+        this.paddle1 = { 
+            x: 20, 
+            y: this.height / 2 - 50, 
+            width: this.paddleWidth, 
+            height: this.paddleHeight, 
+            baseHeight: this.paddleHeight,
+            color: '#0ff', 
+            score: 0, 
+            dy: 0,
+            speedBoost: false,
+            shield: false
+        };
+        this.paddle2 = { 
+            x: this.width - 35, 
+            y: this.height / 2 - 50, 
+            width: this.paddleWidth, 
+            height: this.paddleHeight, 
+            baseHeight: this.paddleHeight,
+            color: '#f0f', 
+            score: 0, 
+            dy: 0,
+            speedBoost: false,
+            shield: false
+        };
 
         this.balls = [];
         this.particles = [];
         this.activeEffects = [];
 
-        // QTE System
-        this.qte = {
-            active: false,
-            letter: '',
-            timer: 0,
-            maxTime: 120, // 2 seconds at 60fps
-            type: '',
-            color: '',
-            feedback: null, // { text: 'NICE!', color: '#0f0', timer: 60 }
-            feedbackTimer: 0
-        };
+        // Power-up definitions
+        this.powerUpTypes = [
+            { 
+                id: 'expand', 
+                name: 'EXPAND', 
+                icon: '⬆️', 
+                color: '#00ff88',
+                chargeTime: 900, // 15 seconds at 60fps
+                chargeMethod: 'time',
+                description: 'Grow paddle 50%'
+            },
+            { 
+                id: 'shield', 
+                name: 'SHIELD', 
+                icon: '🛡️', 
+                color: '#00aaff',
+                chargeTime: 5, // 5 successful hits
+                chargeMethod: 'hits',
+                description: 'Block one goal'
+            },
+            { 
+                id: 'multiball', 
+                name: 'MULTI', 
+                icon: '⚡', 
+                color: '#ffff00',
+                chargeTime: 1200, // 20 seconds
+                chargeMethod: 'time',
+                description: 'Spawn extra ball'
+            }
+        ];
+
+        // Player power-up slots
+        this.playerPowerUps = this.powerUpTypes.map(type => ({
+            ...type,
+            charge: 0,
+            maxCharge: type.chargeTime,
+            isReady: false,
+            cooldown: 0,
+            cooldownMax: 180, // 3 second cooldown after use
+            isActive: false
+        }));
+
+        // AI power-up slots
+        this.aiPowerUps = this.powerUpTypes.map(type => ({
+            ...type,
+            charge: 0,
+            maxCharge: type.chargeTime,
+            isReady: false,
+            cooldown: 0,
+            cooldownMax: 180,
+            isActive: false
+        }));
+
+        // Track hits for hit-based charging
+        this.playerHits = 0;
+        this.aiHits = 0;
 
         // Game State
         this.winScore = 11;
@@ -38,9 +105,14 @@ export class Pong {
         // AI State
         this.aiTargetY = this.height / 2;
         this.aiReactionTimer = 0;
+        this.aiPowerUpTimer = 0; // Timer for AI power-up decisions
 
         // Visuals
         this.shakeTimer = 0;
+        
+        // Feedback messages
+        this.feedback = null;
+        this.feedbackTimer = 0;
 
         this.resetBall();
         this.bindControls();
@@ -51,22 +123,17 @@ export class Pong {
             // Ignore if typing in an input
             if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
 
-            // Prevent default for W/S to avoid any browser shortcuts/scrolling
-            if (e.key === 'w' || e.key === 'W' || e.key === 's' || e.key === 'S') {
+            // Prevent default for game keys
+            if (['w', 'W', 's', 'S', '1', '2', '3'].includes(e.key)) {
                 e.preventDefault();
             }
 
             this.keys[e.key] = true;
 
-            // QTE Input
-            if (this.qte.active) {
-                if (e.key.toUpperCase() === this.qte.letter) {
-                    this.resolveQTE(true);
-                } else if (e.key.length === 1 && e.key.match(/[a-z]/i)) {
-                    // Wrong key penalty? For now, just ignore or maybe slight time penalty
-                    // this.qte.timer -= 10; 
-                }
-            }
+            // Power-up activation (1, 2, 3 keys)
+            if (e.key === '1') this.activatePowerUp(0, 'player');
+            if (e.key === '2') this.activatePowerUp(1, 'player');
+            if (e.key === '3') this.activatePowerUp(2, 'player');
         };
         this.keyUpHandler = (e) => this.keys[e.key] = false;
 
@@ -99,50 +166,53 @@ export class Pong {
         }];
     }
 
-    triggerQTE() {
-        if (!this.qte.active && this.qte.feedbackTimer <= 0 && Math.random() < 0.003) { // Low chance
-            const types = ['expand', 'shrink', 'multiball', 'fast', 'slow'];
-            const type = types[Math.floor(Math.random() * types.length)];
-            const colors = { expand: '#0f0', shrink: '#f00', multiball: '#ff0', fast: '#f60', slow: '#00f' };
-            const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    activatePowerUp(slotIndex, owner) {
+        const powerUps = owner === 'player' ? this.playerPowerUps : this.aiPowerUps;
+        const paddle = owner === 'player' ? this.paddle1 : this.paddle2;
+        const opponent = owner === 'player' ? this.paddle2 : this.paddle1;
+        const powerUp = powerUps[slotIndex];
 
-            this.qte.active = true;
-            this.qte.letter = letters[Math.floor(Math.random() * letters.length)];
-            this.qte.timer = this.qte.maxTime;
-            this.qte.type = type;
-            this.qte.color = colors[type];
-        }
-    }
+        if (!powerUp.isReady || powerUp.cooldown > 0) return false;
 
-    resolveQTE(success) {
-        this.qte.active = false;
-        const recipient = success ? this.paddle1 : this.paddle2;
+        // Activate the power-up
+        powerUp.isReady = false;
+        powerUp.charge = 0;
+        powerUp.cooldown = powerUp.cooldownMax;
+        powerUp.isActive = true;
 
-        this.applyPowerUp(this.qte.type, recipient);
+        // Visual feedback
+        this.createParticles(
+            owner === 'player' ? 100 : this.width - 100,
+            this.height / 2,
+            powerUp.color,
+            20
+        );
 
-        this.qte.feedback = {
-            text: success ? 'NICE!' : 'MISSED!',
-            color: success ? '#0f0' : '#f00',
-            subText: success ? this.qte.type.toUpperCase() : 'AI GOT IT'
-        };
-        this.qte.feedbackTimer = 60; // Show feedback for 1 second
-    }
+        // Show feedback
+        this.showFeedback(
+            owner === 'player' ? 'YOU' : 'AI',
+            powerUp.name,
+            powerUp.color
+        );
 
-    applyPowerUp(type, recipient) {
-        const opponent = recipient === this.paddle1 ? this.paddle2 : this.paddle1;
-
-        // Visual flare
-        this.createParticles(this.width / 2, this.height / 2, this.qte.color, 30);
-
-        switch (type) {
+        // Apply effect based on type
+        switch (powerUp.id) {
             case 'expand':
-                recipient.height = Math.min(200, recipient.height + 40);
-                setTimeout(() => recipient.height = this.paddleHeight, 8000);
+                paddle.height = paddle.baseHeight * 1.5;
+                setTimeout(() => {
+                    if (this.isRunning) {
+                        paddle.height = paddle.baseHeight;
+                        powerUp.isActive = false;
+                    }
+                }, 5000);
                 break;
-            case 'shrink':
-                opponent.height = Math.max(40, opponent.height - 40);
-                setTimeout(() => opponent.height = this.paddleHeight, 8000);
+
+            case 'shield':
+                paddle.shield = true;
+                powerUp.isActive = true;
+                // Shield stays until used
                 break;
+
             case 'multiball':
                 this.balls.push({
                     x: this.width / 2,
@@ -154,15 +224,104 @@ export class Pong {
                     trail: [],
                     color: '#ff0'
                 });
+                powerUp.isActive = false;
                 break;
-            case 'fast':
-                this.balls.forEach(b => b.speed *= 1.5);
-                setTimeout(() => this.balls.forEach(b => b.speed /= 1.5), 5000);
-                break;
-            case 'slow':
-                this.balls.forEach(b => b.speed *= 0.6);
-                setTimeout(() => this.balls.forEach(b => b.speed /= 0.6), 5000);
-                break;
+        }
+
+        return true;
+    }
+
+    showFeedback(who, what, color) {
+        this.feedback = { who, what, color };
+        this.feedbackTimer = 90; // 1.5 seconds
+    }
+
+    updatePowerUps() {
+        // Update player power-ups
+        this.playerPowerUps.forEach((powerUp, index) => {
+            if (powerUp.cooldown > 0) {
+                powerUp.cooldown--;
+            } else if (!powerUp.isReady) {
+                // Charge based on method
+                if (powerUp.chargeMethod === 'time') {
+                    powerUp.charge++;
+                }
+                // Hit-based charging is handled in handlePaddleHit
+
+                if (powerUp.charge >= powerUp.maxCharge) {
+                    powerUp.isReady = true;
+                    powerUp.charge = powerUp.maxCharge;
+                }
+            }
+        });
+
+        // Update AI power-ups
+        this.aiPowerUps.forEach((powerUp, index) => {
+            if (powerUp.cooldown > 0) {
+                powerUp.cooldown--;
+            } else if (!powerUp.isReady) {
+                if (powerUp.chargeMethod === 'time') {
+                    powerUp.charge++;
+                }
+
+                if (powerUp.charge >= powerUp.maxCharge) {
+                    powerUp.isReady = true;
+                    powerUp.charge = powerUp.maxCharge;
+                }
+            }
+        });
+
+        // AI power-up usage logic
+        this.aiPowerUpTimer++;
+        if (this.aiPowerUpTimer > 60) { // Check every second
+            this.aiPowerUpTimer = 0;
+            this.aiUsePowerUp();
+        }
+    }
+
+    aiUsePowerUp() {
+        // AI strategic power-up usage
+        const readyPowerUps = this.aiPowerUps
+            .map((p, i) => ({ ...p, index: i }))
+            .filter(p => p.isReady);
+
+        if (readyPowerUps.length === 0) return;
+
+        // Decision logic based on game state
+        const scoreDiff = this.paddle1.score - this.paddle2.score;
+        const ballComingToAI = this.balls.some(b => b.dx > 0);
+
+        // Use shield if losing and don't have one
+        if (scoreDiff > 0 && !this.paddle2.shield) {
+            const shieldPowerUp = readyPowerUps.find(p => p.id === 'shield');
+            if (shieldPowerUp && Math.random() < 0.7) {
+                this.activatePowerUp(shieldPowerUp.index, 'ai');
+                return;
+            }
+        }
+
+        // Use expand when ball is coming and AI is struggling
+        if (ballComingToAI && scoreDiff > 1) {
+            const expandPowerUp = readyPowerUps.find(p => p.id === 'expand');
+            if (expandPowerUp && Math.random() < 0.5) {
+                this.activatePowerUp(expandPowerUp.index, 'ai');
+                return;
+            }
+        }
+
+        // Use multiball when AI is winning to press advantage
+        if (scoreDiff < -1) {
+            const multiballPowerUp = readyPowerUps.find(p => p.id === 'multiball');
+            if (multiballPowerUp && Math.random() < 0.4) {
+                this.activatePowerUp(multiballPowerUp.index, 'ai');
+                return;
+            }
+        }
+
+        // Random usage if nothing strategic
+        if (Math.random() < 0.1 && readyPowerUps.length > 0) {
+            const randomPowerUp = readyPowerUps[Math.floor(Math.random() * readyPowerUps.length)];
+            this.activatePowerUp(randomPowerUp.index, 'ai');
         }
     }
 
@@ -172,41 +331,34 @@ export class Pong {
         // Screen shake decay
         if (this.shakeTimer > 0) this.shakeTimer--;
 
-        // QTE Logic
-        this.triggerQTE();
-        if (this.qte.active) {
-            this.qte.timer--;
-            if (this.qte.timer <= 0) {
-                this.resolveQTE(false); // Time ran out, AI gets it
-            }
-        }
-        if (this.qte.feedbackTimer > 0) {
-            this.qte.feedbackTimer--;
-        }
+        // Feedback timer
+        if (this.feedbackTimer > 0) this.feedbackTimer--;
+
+        // Update power-ups
+        this.updatePowerUps();
 
         // Player Movement (W/S keys only)
+        const playerSpeed = this.paddle1.speedBoost ? 12 : 8;
         if (this.keys['w'] || this.keys['W']) {
-            this.paddle1.y = Math.max(0, this.paddle1.y - 8);
+            this.paddle1.y = Math.max(0, this.paddle1.y - playerSpeed);
         }
         if (this.keys['s'] || this.keys['S']) {
-            this.paddle1.y = Math.min(this.height - this.paddle1.height, this.paddle1.y + 8);
+            this.paddle1.y = Math.min(this.height - this.paddle1.height, this.paddle1.y + playerSpeed);
         }
 
         // AI Movement (Imperfect)
-        // Find closest ball moving towards AI
         const targetBall = this.balls.filter(b => b.dx > 0).sort((a, b) => b.x - a.x)[0];
 
         if (targetBall) {
-            // Reaction delay simulation
             if (this.aiReactionTimer-- <= 0) {
                 this.aiTargetY = targetBall.y - this.paddle2.height / 2;
-                this.aiReactionTimer = Math.random() * 10 + 5; // Re-evaluate every 5-15 frames
+                this.aiReactionTimer = Math.random() * 10 + 5;
             }
 
+            const aiSpeed = this.paddle2.speedBoost ? 7 : 5.5;
             const dy = this.aiTargetY - this.paddle2.y;
-            this.paddle2.y += Math.sign(dy) * Math.min(Math.abs(dy), 5.5); // Limited speed
+            this.paddle2.y += Math.sign(dy) * Math.min(Math.abs(dy), aiSpeed);
         } else {
-            // Return to center if no ball coming
             const dy = (this.height / 2 - this.paddle2.height / 2) - this.paddle2.y;
             this.paddle2.y += Math.sign(dy) * Math.min(Math.abs(dy), 2);
         }
@@ -239,24 +391,48 @@ export class Pong {
 
             // Check Paddle 1
             if (ball.dx < 0 && ball.x - ball.radius < p1.x + p1.width && ball.x + ball.radius > p1.x && ball.y > p1.y && ball.y < p1.y + p1.height) {
-                this.handlePaddleHit(ball, p1, 1);
+                this.handlePaddleHit(ball, p1, 1, 'player');
             }
             // Check Paddle 2
             if (ball.dx > 0 && ball.x + ball.radius > p2.x && ball.x - ball.radius < p2.x + p2.width && ball.y > p2.y && ball.y < p2.y + p2.height) {
-                this.handlePaddleHit(ball, p2, -1);
+                this.handlePaddleHit(ball, p2, -1, 'ai');
             }
 
             // Scoring
             if (ball.x < 0) {
-                this.paddle2.score++;
-                this.createParticles(ball.x, ball.y, '#f0f', 30);
-                this.balls.splice(i, 1);
-                this.shakeTimer = 15;
+                // Ball went past player
+                if (this.paddle1.shield) {
+                    // Shield blocks the goal
+                    this.paddle1.shield = false;
+                    ball.dx = Math.abs(ball.dx); // Bounce back
+                    ball.x = 10;
+                    this.createParticles(ball.x, ball.y, '#00aaff', 30);
+                    this.showFeedback('SHIELD', 'BLOCKED!', '#00aaff');
+                    // Mark shield power-up as inactive
+                    const shieldPowerUp = this.playerPowerUps.find(p => p.id === 'shield');
+                    if (shieldPowerUp) shieldPowerUp.isActive = false;
+                } else {
+                    this.paddle2.score++;
+                    this.createParticles(ball.x, ball.y, '#f0f', 30);
+                    this.balls.splice(i, 1);
+                    this.shakeTimer = 15;
+                }
             } else if (ball.x > this.width) {
-                this.paddle1.score++;
-                this.createParticles(ball.x, ball.y, '#0ff', 30);
-                this.balls.splice(i, 1);
-                this.shakeTimer = 15;
+                // Ball went past AI
+                if (this.paddle2.shield) {
+                    this.paddle2.shield = false;
+                    ball.dx = -Math.abs(ball.dx);
+                    ball.x = this.width - 10;
+                    this.createParticles(ball.x, ball.y, '#00aaff', 30);
+                    this.showFeedback('AI SHIELD', 'BLOCKED!', '#00aaff');
+                    const shieldPowerUp = this.aiPowerUps.find(p => p.id === 'shield');
+                    if (shieldPowerUp) shieldPowerUp.isActive = false;
+                } else {
+                    this.paddle1.score++;
+                    this.createParticles(ball.x, ball.y, '#0ff', 30);
+                    this.balls.splice(i, 1);
+                    this.shakeTimer = 15;
+                }
             }
         }
 
@@ -278,19 +454,30 @@ export class Pong {
         }
     }
 
-    handlePaddleHit(ball, paddle, direction) {
+    handlePaddleHit(ball, paddle, direction, owner) {
         // Calculate relative impact point (-1 to 1)
         const collidePoint = (ball.y - (paddle.y + paddle.height / 2)) / (paddle.height / 2);
 
         // Add spin/angle
-        const angleRad = collidePoint * (Math.PI / 4); // Max 45 degrees
+        const angleRad = collidePoint * (Math.PI / 4);
 
-        ball.speed = Math.min(ball.speed + 0.5, 15); // Increase speed
+        ball.speed = Math.min(ball.speed + 0.5, 15);
         ball.dx = direction * ball.speed * Math.cos(angleRad);
         ball.dy = ball.speed * Math.sin(angleRad);
 
         this.createParticles(ball.x, ball.y, paddle.color, 10);
         this.shakeTimer = 5;
+
+        // Charge hit-based power-ups
+        const powerUps = owner === 'player' ? this.playerPowerUps : this.aiPowerUps;
+        powerUps.forEach(powerUp => {
+            if (powerUp.chargeMethod === 'hits' && !powerUp.isReady && powerUp.cooldown <= 0) {
+                powerUp.charge++;
+                if (powerUp.charge >= powerUp.maxCharge) {
+                    powerUp.isReady = true;
+                }
+            }
+        });
     }
 
     createParticles(x, y, color, count) {
@@ -303,6 +490,80 @@ export class Pong {
                 color: color,
                 size: Math.random() * 3 + 1
             });
+        }
+    }
+
+    drawPowerUpSlot(x, y, powerUp, keyLabel, isPlayer) {
+        const ctx = this.ctx;
+        const size = 40;
+        const chargePercent = powerUp.charge / powerUp.maxCharge;
+        const isOnCooldown = powerUp.cooldown > 0;
+
+        // Background circle
+        ctx.beginPath();
+        ctx.arc(x, y, size / 2, 0, Math.PI * 2);
+        ctx.fillStyle = isOnCooldown ? 'rgba(50, 50, 50, 0.8)' : 'rgba(20, 20, 40, 0.8)';
+        ctx.fill();
+
+        // Charge ring
+        if (!powerUp.isReady && !isOnCooldown) {
+            ctx.beginPath();
+            ctx.arc(x, y, size / 2 + 3, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * chargePercent));
+            ctx.strokeStyle = powerUp.color + '80';
+            ctx.lineWidth = 4;
+            ctx.stroke();
+        }
+
+        // Ready glow
+        if (powerUp.isReady) {
+            ctx.beginPath();
+            ctx.arc(x, y, size / 2 + 5, 0, Math.PI * 2);
+            ctx.strokeStyle = powerUp.color;
+            ctx.lineWidth = 3;
+            ctx.shadowColor = powerUp.color;
+            ctx.shadowBlur = 15;
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+
+            // Pulsing effect
+            const pulse = Math.sin(Date.now() / 200) * 0.2 + 0.8;
+            ctx.beginPath();
+            ctx.arc(x, y, size / 2, 0, Math.PI * 2);
+            ctx.fillStyle = powerUp.color + Math.floor(pulse * 60).toString(16).padStart(2, '0');
+            ctx.fill();
+        }
+
+        // Cooldown overlay
+        if (isOnCooldown) {
+            const cooldownPercent = powerUp.cooldown / powerUp.cooldownMax;
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            ctx.arc(x, y, size / 2, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * cooldownPercent));
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(100, 100, 100, 0.7)';
+            ctx.fill();
+        }
+
+        // Icon
+        ctx.font = '20px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = powerUp.isReady ? '#fff' : (isOnCooldown ? '#666' : '#aaa');
+        ctx.fillText(powerUp.icon, x, y);
+
+        // Key label (only for player)
+        if (isPlayer) {
+            ctx.font = 'bold 12px Arial';
+            ctx.fillStyle = powerUp.isReady ? '#fff' : '#666';
+            ctx.fillText(keyLabel, x, y + size / 2 + 12);
+        }
+
+        // Active indicator
+        if (powerUp.isActive) {
+            ctx.beginPath();
+            ctx.arc(x, y - size / 2 - 8, 4, 0, Math.PI * 2);
+            ctx.fillStyle = powerUp.color;
+            ctx.fill();
         }
     }
 
@@ -341,13 +602,28 @@ export class Pong {
         // Paddles (with Glow)
         this.ctx.shadowBlur = 20;
 
+        // Player paddle
         this.ctx.shadowColor = this.paddle1.color;
         this.ctx.fillStyle = this.paddle1.color;
         this.ctx.fillRect(this.paddle1.x, this.paddle1.y, this.paddle1.width, this.paddle1.height);
 
+        // Shield indicator on paddle
+        if (this.paddle1.shield) {
+            this.ctx.strokeStyle = '#00aaff';
+            this.ctx.lineWidth = 3;
+            this.ctx.strokeRect(this.paddle1.x - 5, this.paddle1.y - 5, this.paddle1.width + 10, this.paddle1.height + 10);
+        }
+
+        // AI paddle
         this.ctx.shadowColor = this.paddle2.color;
         this.ctx.fillStyle = this.paddle2.color;
         this.ctx.fillRect(this.paddle2.x, this.paddle2.y, this.paddle2.width, this.paddle2.height);
+
+        if (this.paddle2.shield) {
+            this.ctx.strokeStyle = '#00aaff';
+            this.ctx.lineWidth = 3;
+            this.ctx.strokeRect(this.paddle2.x - 5, this.paddle2.y - 5, this.paddle2.width + 10, this.paddle2.height + 10);
+        }
 
         // Balls (with Trails)
         this.balls.forEach(ball => {
@@ -380,47 +656,32 @@ export class Pong {
         this.ctx.globalAlpha = 1;
         this.ctx.shadowBlur = 0;
 
-        // QTE UI
-        if (this.qte.active) {
-            this.ctx.save();
-            this.ctx.translate(this.width / 2, this.height / 2);
+        // Power-up UI - Player (left side, bottom)
+        const playerPowerUpY = this.height - 60;
+        this.playerPowerUps.forEach((powerUp, index) => {
+            this.drawPowerUpSlot(60 + index * 55, playerPowerUpY, powerUp, String(index + 1), true);
+        });
 
-            // Timer Circle
-            const progress = this.qte.timer / this.qte.maxTime;
-            this.ctx.beginPath();
-            this.ctx.arc(0, 0, 60, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * progress));
-            this.ctx.strokeStyle = this.qte.color;
-            this.ctx.lineWidth = 5;
-            this.ctx.stroke();
-
-            // Letter
-            this.ctx.fillStyle = '#fff';
-            this.ctx.font = 'bold 60px Arial';
-            this.ctx.textAlign = 'center';
-            this.ctx.textBaseline = 'middle';
-            this.ctx.fillText(this.qte.letter, 0, 5);
-
-            // Type Label
-            this.ctx.font = '16px Arial';
-            this.ctx.fillText(this.qte.type.toUpperCase(), 0, 80);
-
-            this.ctx.restore();
-        }
+        // Power-up UI - AI (right side, bottom)
+        const aiPowerUpY = this.height - 60;
+        this.aiPowerUps.forEach((powerUp, index) => {
+            this.drawPowerUpSlot(this.width - 170 + index * 55, aiPowerUpY, powerUp, '', false);
+        });
 
         // Feedback UI
-        if (this.qte.feedbackTimer > 0 && this.qte.feedback) {
+        if (this.feedbackTimer > 0 && this.feedback) {
             this.ctx.save();
             this.ctx.translate(this.width / 2, this.height / 2);
-            this.ctx.globalAlpha = Math.min(1, this.qte.feedbackTimer / 20);
+            this.ctx.globalAlpha = Math.min(1, this.feedbackTimer / 30);
 
-            this.ctx.fillStyle = this.qte.feedback.color;
-            this.ctx.font = 'bold 40px Arial';
+            this.ctx.fillStyle = this.feedback.color;
+            this.ctx.font = 'bold 24px Arial';
             this.ctx.textAlign = 'center';
-            this.ctx.fillText(this.qte.feedback.text, 0, -20);
-
-            this.ctx.fillStyle = '#fff';
-            this.ctx.font = '20px Arial';
-            this.ctx.fillText(this.qte.feedback.subText, 0, 20);
+            this.ctx.shadowColor = this.feedback.color;
+            this.ctx.shadowBlur = 20;
+            this.ctx.fillText(this.feedback.who, 0, -15);
+            this.ctx.fillText(this.feedback.what, 0, 15);
+            this.ctx.shadowBlur = 0;
 
             this.ctx.restore();
         }
@@ -436,9 +697,17 @@ export class Pong {
         this.ctx.fillText(this.paddle2.score, 3 * this.width / 4, 80);
 
         // Controls Hint
-        this.ctx.font = '16px Arial';
+        this.ctx.font = '14px Arial';
+        this.ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+        this.ctx.fillText('W/S: Move  |  1/2/3: Power-ups', this.width / 2, 25);
+
+        // Power-up labels
+        this.ctx.font = '10px Arial';
         this.ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
-        this.ctx.fillText('Use W / S to move', this.width / 2, this.height - 20);
+        this.ctx.textAlign = 'left';
+        this.ctx.fillText('YOUR POWER-UPS', 35, this.height - 95);
+        this.ctx.textAlign = 'right';
+        this.ctx.fillText('AI POWER-UPS', this.width - 35, this.height - 95);
 
         this.ctx.restore();
     }

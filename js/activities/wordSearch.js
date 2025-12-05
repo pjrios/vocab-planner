@@ -404,10 +404,76 @@ export class WordSearchActivity {
 
     getScore() {
         const percentage = Math.round((this.foundWords.size / this.words.length) * 100);
+        const isComplete = this.foundWords.size === this.words.length;
+        
+        // Show replay button when complete
+        if (isComplete && !this.container.querySelector('#replay-wordsearch')) {
+            setTimeout(() => this.showCompletionOverlay(), 500);
+        }
+        
         return {
             score: percentage,
             details: `Found ${this.foundWords.size} of ${this.words.length} words`,
-            isComplete: this.foundWords.size === this.words.length
+            isComplete
         };
+    }
+    
+    showCompletionOverlay() {
+        const overlay = document.createElement('div');
+        overlay.className = 'completion-overlay';
+        overlay.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        `;
+        overlay.innerHTML = `
+            <div class="completion-screen" style="background: var(--card-bg, #1e293b); padding: 2rem; border-radius: 1rem; text-align: center;">
+                <h2>🎉 All Words Found!</h2>
+                <p>You found all ${this.words.length} words!</p>
+                <button id="replay-wordsearch" class="btn primary-btn" style="margin-top: 1rem;">🔄 Play Again</button>
+                <button id="close-wordsearch" class="btn secondary-btn" style="margin-top: 0.5rem; margin-left: 0.5rem;">Close</button>
+            </div>
+        `;
+        
+        document.body.appendChild(overlay);
+        
+        overlay.querySelector('#replay-wordsearch').addEventListener('click', () => {
+            document.body.removeChild(overlay);
+            this.restart();
+        });
+        
+        overlay.querySelector('#close-wordsearch').addEventListener('click', () => {
+            document.body.removeChild(overlay);
+        });
+    }
+    
+    restart() {
+        // Clear saved state
+        const key = `word_search_state_${this.vocabID}`;
+        localStorage.removeItem(key);
+        
+        // Reset game state
+        this.grid = [];
+        this.wordPositions = [];
+        this.foundWords = new Set();
+        this.isSelecting = false;
+        this.selectedCells = [];
+        
+        // Generate new grid
+        this.generateGrid();
+        
+        // Notify progress system of new session
+        if (this.onProgress) {
+            this.onProgress({ score: 0, details: 'Found 0 of ' + this.words.length + ' words', isComplete: false, isReplay: true });
+        }
+        
+        this.render();
     }
 }
